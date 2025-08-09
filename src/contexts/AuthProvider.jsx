@@ -32,36 +32,45 @@ const AuthProvider = ({ children }) => {
         email_confirmed_at: currentUser?.email === 'admin@direitai.com' ? new Date().toISOString() : currentUser?.email_confirmed_at
       };
       
+      console.log('✅ Setting basic profile and loading to false');
       setUserProfile(basicProfile);
       setLoading(false);
       
       // Tentar obter perfil do backend em background (opcional)
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.access_token) {
-          const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
-          const response = await fetch(`${API_BASE_URL}/users/profile`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 5000 // 5 segundos de timeout
-          });
+      setTimeout(async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
           
-          if (response.ok) {
-            const data = await response.json();
-            console.log('✅ Profile fetched from backend:', data);
-            setUserProfile(prev => ({ ...prev, ...(data.profile || data) }));
+          if (session?.access_token) {
+            const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            
+            const response = await fetch(`${API_BASE_URL}/users/profile`, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${session.access_token}`,
+                'Content-Type': 'application/json'
+              },
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (response.ok) {
+              const data = await response.json();
+              console.log('✅ Profile fetched from backend:', data);
+              setUserProfile(prev => ({ ...prev, ...(data.profile || data) }));
+            }
           }
+        } catch (backendError) {
+          console.log('⚠️ Backend profile fetch failed, using basic profile:', backendError.message);
+          // Continua com o perfil básico, não é um erro crítico
         }
-      } catch (backendError) {
-         console.log('⚠️ Backend profile fetch failed, using basic profile:', backendError.message);
-         // Continua com o perfil básico, não é um erro crítico
-       }
+      }, 100); // Delay de 100ms para garantir que o estado seja definido primeiro
+      
     } catch (error) {
-      console.error('Erro na busca do perfil:', error);
+      console.error('❌ Erro na busca do perfil:', error);
       // Fallback para perfil básico em caso de erro crítico
       const basicProfile = {
         id: currentUser.id,
@@ -71,6 +80,7 @@ const AuthProvider = ({ children }) => {
         is_admin: currentUser?.email === 'admin@direitai.com',
         email_confirmed_at: currentUser?.email === 'admin@direitai.com' ? new Date().toISOString() : currentUser?.email_confirmed_at
       };
+      console.log('✅ Setting fallback profile and loading to false');
       setUserProfile(basicProfile);
       setLoading(false);
     }
