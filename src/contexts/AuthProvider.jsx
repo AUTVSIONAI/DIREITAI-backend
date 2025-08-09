@@ -7,6 +7,16 @@ const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  
+  // Timeout de segurança para garantir que loading nunca fique infinito
+  React.useEffect(() => {
+    const timeout = setTimeout(() => {
+      console.log('⚠️ Timeout de segurança ativado - definindo loading como false');
+      setLoading(false);
+    }, 10000); // 10 segundos
+    
+    return () => clearTimeout(timeout);
+  }, [])
 
   const fetchUserProfile = async (currentUser) => {
     try {
@@ -68,21 +78,26 @@ const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     let mounted = true;
+    console.log('🚀 Inicializando AuthProvider...');
     
     const initializeAuth = async () => {
       try {
+        console.log('🔍 Obtendo usuário atual...');
         const currentUser = await getCurrentUser();
+        console.log('👤 Usuário atual:', currentUser?.email || 'Nenhum usuário');
         
         if (mounted) {
           if (currentUser) {
+            console.log('✅ Usuário encontrado, definindo estado...');
             setUser(currentUser);
             await fetchUserProfile(currentUser);
           } else {
+            console.log('❌ Nenhum usuário encontrado, definindo loading como false');
             setLoading(false);
           }
         }
       } catch (error) {
-        console.error('Erro na inicialização da auth:', error);
+        console.error('❌ Erro na inicialização da auth:', error);
         if (mounted) {
           setUser(null);
           setUserProfile(null);
