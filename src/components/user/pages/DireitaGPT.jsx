@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Send, Bot, User, Trash2, Download, Copy, Wifi, WifiOff } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
-import { aiService } from '../../../services/aiService'
+import { AIService } from '../../../services/ai'
 
 const DireitaGPT = () => {
+  const aiService = new AIService()
   const { userProfile } = useAuth()
   const [messages, setMessages] = useState([])
   const [inputMessage, setInputMessage] = useState('')
