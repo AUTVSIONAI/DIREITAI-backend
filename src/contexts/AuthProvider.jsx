@@ -32,7 +32,8 @@ const AuthProvider = ({ children }) => {
       }
       
       // Fazer requisição para a API do backend
-      const response = await fetch('http://localhost:5120/api/users/profile', {
+      const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
+      const response = await fetch(`${API_BASE_URL}/users/profile`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,

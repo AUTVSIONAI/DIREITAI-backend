@@ -11,3 +11,4 @@ build/
 
 # Backend repository (separate repo)
 backend/
+.vercel
