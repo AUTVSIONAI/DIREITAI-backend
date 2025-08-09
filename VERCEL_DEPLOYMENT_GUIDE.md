@@ -6,6 +6,7 @@ Os erros de deploy foram **COMPLETAMENTE RESOLVIDOS**:
 - ❌ **Husky removido completamente** do projeto
 - ✅ **Package-lock.json regenerado** sem dependências do husky
 - ✅ **Script de build corrigido** - removido `tsc` para evitar problemas de permissão
+- ✅ **Arquivos .env removidos do repositório** - removido arquivo `.env` do frontend que continha chaves secretas
 - ✅ **Push realizado com sucesso** para o GitHub
 - ✅ **Projeto pronto** para deploy na Vercel
 
