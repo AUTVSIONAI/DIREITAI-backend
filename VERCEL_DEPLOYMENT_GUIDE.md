@@ -60,6 +60,10 @@ STRIPE_WEBHOOK_SECRET=[CONFIGURE_APOS_CRIAR_WEBHOOK]
 5. **Substitua** os valores entre `[...]` pelas chaves reais
 6. **Atualize** `VITE_API_URL` com a URL do backend
 
+> **✅ CORREÇÃO APLICADA**: Pasta `backend/` removida do repositório frontend (commit dcb30118)
+> - O repositório frontend agora está limpo e focado apenas no frontend
+> - Backend deve ser deployado separadamente no repositório DIREITAI-backend
+
 ### **Backend**
 1. Selecione o projeto **DIREITAI-backend**
 2. Settings > Environment Variables
