@@ -8,3 +8,6 @@ build/
 .DS_Store
 *.log
 .vercel
+
+# Backend repository (separate repo)
+backend/
