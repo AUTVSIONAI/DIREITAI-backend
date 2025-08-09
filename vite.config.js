@@ -15,9 +15,10 @@ export default defineConfig({
     proxy: {
       // Proxy para API do backend
       '/api': {
-        target: 'http://localhost:5120',
+        target: process.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api',
         changeOrigin: true,
-        secure: false,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },

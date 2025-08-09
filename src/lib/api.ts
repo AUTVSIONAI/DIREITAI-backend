@@ -3,7 +3,7 @@ import { ApiClient, ApiResponse, RequestOptions, ApiMetrics, HealthCheck } from 
 import { supabase } from './supabase';
 
 // Configuração base da API
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5120/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
 
 class ApiClientImpl implements ApiClient {
   private axiosInstance: AxiosInstance;

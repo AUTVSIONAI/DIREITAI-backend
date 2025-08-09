@@ -2,7 +2,7 @@ import { supabase } from '../lib/supabase'
 
 class AIService {
   constructor() {
-    this.baseURL = 'http://localhost:5120/api'
+    this.baseURL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api'
   }
 
   async getAuthHeaders() {
