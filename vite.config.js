@@ -31,7 +31,7 @@ export default defineConfig({
   // Configurações de build
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false, // Reduzir tamanho em produção
     minify: 'terser',
     target: 'es2015',
     rollupOptions: {
@@ -47,6 +47,10 @@ export default defineConfig({
     // Configurações de otimização
     chunkSizeWarningLimit: 1000,
     assetsInlineLimit: 4096,
+    // Reduzir preload automático
+    modulePreload: {
+      polyfill: false,
+    },
   },
   
   // Configurações de resolução
