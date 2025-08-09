@@ -12,61 +12,51 @@ const AuthProvider = ({ children }) => {
     try {
       console.log('🔍 Fetching user profile for:', currentUser.email);
       
-      // Obter sessão atual para ter o token
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        console.log('❌ No session token available');
-        // Criar perfil básico quando não há token
-        const basicProfile = {
-          id: currentUser.id,
-          auth_id: currentUser.id,
-          full_name: currentUser?.user_metadata?.full_name || 'Usuário',
-          email: currentUser?.email || '',
-          is_admin: currentUser?.email === 'admin@direitai.com',
-          email_confirmed_at: currentUser?.email === 'admin@direitai.com' ? new Date().toISOString() : currentUser?.email_confirmed_at
-        };
-        setUserProfile(basicProfile);
-        setLoading(false);
-        return;
-      }
-      
-      // Fazer requisição para a API do backend
-      const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
-      const response = await fetch(`${API_BASE_URL}/users/profile`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Profile fetched successfully:', data);
-        setUserProfile(data.profile || data);
-        setLoading(false);
-      } else {
-        console.error('❌ Failed to fetch profile:', response.status, response.statusText);
-        // Fallback para perfil básico
-        const basicProfile = {
-          id: currentUser.id,
-          auth_id: currentUser.id,
-          full_name: currentUser?.user_metadata?.full_name || 'Usuário',
-          email: currentUser?.email || '',
-          is_admin: currentUser?.email === 'admin@direitai.com',
-          email_confirmed_at: currentUser?.email === 'admin@direitai.com' ? new Date().toISOString() : currentUser?.email_confirmed_at
-        };
-        setUserProfile(basicProfile);
-        setLoading(false);
-      }
-    } catch (error) {
-      console.error('Erro na busca do perfil:', error);
-      // Fallback para perfil básico
+      // Criar perfil básico imediatamente para evitar carregamento infinito
       const basicProfile = {
         id: currentUser.id,
         auth_id: currentUser.id,
-        full_name: currentUser?.user_metadata?.full_name || 'Usuário',
+        full_name: currentUser?.user_metadata?.full_name || currentUser?.user_metadata?.username || 'Usuário',
+        email: currentUser?.email || '',
+        is_admin: currentUser?.email === 'admin@direitai.com',
+        email_confirmed_at: currentUser?.email === 'admin@direitai.com' ? new Date().toISOString() : currentUser?.email_confirmed_at
+      };
+      
+      setUserProfile(basicProfile);
+      setLoading(false);
+      
+      // Tentar obter perfil do backend em background (opcional)
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.access_token) {
+          const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
+          const response = await fetch(`${API_BASE_URL}/users/profile`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 5000 // 5 segundos de timeout
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('✅ Profile fetched from backend:', data);
+            setUserProfile(prev => ({ ...prev, ...(data.profile || data) }));
+          }
+        }
+      } catch (backendError) {
+         console.log('⚠️ Backend profile fetch failed, using basic profile:', backendError.message);
+         // Continua com o perfil básico, não é um erro crítico
+       }
+    } catch (error) {
+      console.error('Erro na busca do perfil:', error);
+      // Fallback para perfil básico em caso de erro crítico
+      const basicProfile = {
+        id: currentUser.id,
+        auth_id: currentUser.id,
+        full_name: currentUser?.user_metadata?.full_name || currentUser?.user_metadata?.username || 'Usuário',
         email: currentUser?.email || '',
         is_admin: currentUser?.email === 'admin@direitai.com',
         email_confirmed_at: currentUser?.email === 'admin@direitai.com' ? new Date().toISOString() : currentUser?.email_confirmed_at
@@ -87,12 +77,15 @@ const AuthProvider = ({ children }) => {
           if (currentUser) {
             setUser(currentUser);
             await fetchUserProfile(currentUser);
+          } else {
+            setLoading(false);
           }
-          setLoading(false);
         }
       } catch (error) {
         console.error('Erro na inicialização da auth:', error);
         if (mounted) {
+          setUser(null);
+          setUserProfile(null);
           setLoading(false);
         }
       }
@@ -104,20 +97,21 @@ const AuthProvider = ({ children }) => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
       
+      console.log('🔄 Auth state changed:', event, session?.user?.email);
+      
       if (session?.user) {
         // Permitir login do admin sem confirmação de email
         if (!session.user.email_confirmed_at && session.user.email !== 'admin@direitai.com') {
+          console.log('❌ Email not confirmed for non-admin user');
           setUser(null);
           setUserProfile(null);
           setLoading(false);
           return;
         }
         
-       
-    setUser(session.user);
-await fetchUserProfile(session.user);
-
-} else {
+        setUser(session.user);
+        await fetchUserProfile(session.user);
+      } else {
         setUser(null);
         setUserProfile(null);
         setLoading(false);
