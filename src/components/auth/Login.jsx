@@ -127,32 +127,7 @@ const Login = () => {
             </button>
           </div>
 
-          {/* Login de teste */}
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <p className="text-xs text-gray-500 text-center mb-3">Contas de teste:</p>
-            <div className="space-y-2">
-              <button
-                onClick={() => {
-                  setEmail('user@direitai.com')
-                  setPassword('123456')
-                }}
-                className="w-full text-xs bg-gray-100 hover:bg-gray-200 p-2 rounded flex items-center justify-center space-x-1"
-              >
-                <Users className="h-3 w-3" />
-                <span>Usuário Teste</span>
-              </button>
-              <button
-                onClick={() => {
-                  setEmail('admin@direitai.com')
-                  setPassword('GTUVX809XLQ@')
-                }}
-                className="w-full text-xs bg-primary-100 hover:bg-primary-200 p-2 rounded flex items-center justify-center space-x-1"
-              >
-                <Shield className="h-3 w-3" />
-                <span>Admin Teste</span>
-              </button>
-            </div>
-          </div>
+
         </div>
       </div>
     </div>
