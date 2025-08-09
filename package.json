@@ -9,10 +9,10 @@
   "homepage": "https://direitaai.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/direitaai/direitaai.git"
+    "url": "https://github.com/AUTVSIONAI/DIREITAI.git"
   },
   "bugs": {
-    "url": "https://github.com/direitaai/direitaai/issues"
+    "url": "https://github.com/AUTVSIONAI/DIREITAI/issues"
   },
   "keywords": [
     "react",
@@ -28,7 +28,7 @@
     "dev": "vite",
     "build": "npx vite build",
     "preview": "vite preview",
-    "server": "node backend/server.js",
+
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint . --ext ts,tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,scss,md}\"",
