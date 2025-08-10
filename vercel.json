@@ -5,6 +5,15 @@
       "destination": "/index.html"
     }
   ],
+  "build": {
+    "env": {
+      "VITE_API_URL": "https://direitai-backend.vercel.app/api",
+      "VITE_SUPABASE_URL": "https://vussgslenvyztckeuyap.supabase.co",
+      "VITE_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo",
+      "VITE_MAPBOX_TOKEN": "pk.eyJ1IjoiZGlyZWl0YWkiLCJhIjoiY21kejNneXVmMDhrZzJpcHkxNDI3a3A1eiJ9.XDUKcah1_a8WQhD8Xyghew",
+      "VITE_STRIPE_PUBLISHABLE_KEY": "pk_live_51RssgSK8OsYFzgVR9yq6JnFzaAKKSD9Lx3R3Il40UV0QwENSrCCDm9XWzJWpaFsQDrC9yBeimeLrnzskTT9hbuf000rP4iLUce"
+    }
+  },
   "env": {
     "VITE_API_URL": "https://direitai-backend.vercel.app/api",
     "VITE_SUPABASE_URL": "https://vussgslenvyztckeuyap.supabase.co",
