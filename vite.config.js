@@ -9,18 +9,9 @@ export default defineConfig({
   // Configurações de desenvolvimento
   server: {
     port: 5121,
-    host: true, // Permite acesso externo
-    open: true, // Abre o navegador automaticamente
+    host: true,
+    open: true,
     cors: true,
-    proxy: {
-      // Proxy para API do backend
-      '/api': {
-        target: process.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api',
-        changeOrigin: true,
-        secure: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-      },
-    },
   },
   
   // Configurações de preview
@@ -29,25 +20,12 @@ export default defineConfig({
     host: true,
   },
   
-  // Configurações de build
+  // Configurações de build simplificadas
   build: {
     outDir: 'dist',
-    sourcemap: false, // Reduzir tamanho em produção
-    minify: 'terser',
+    sourcemap: false,
     target: 'es2015',
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          // Separar bibliotecas grandes em chunks separados
-          vendor: ['react', 'react-dom'],
-          router: ['react-router-dom'],
-          ui: ['@headlessui/react', '@heroicons/react'],
-        },
-      },
-    },
-    // Configurações de otimização
     chunkSizeWarningLimit: 1000,
-    assetsInlineLimit: 4096,
     // Reduzir preload automático
     modulePreload: {
       polyfill: false,
