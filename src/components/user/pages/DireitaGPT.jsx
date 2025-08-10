@@ -33,8 +33,9 @@ const DireitaGPT = () => {
       setIsLoading(true)
       const history = await AIService.getConversations(userProfile?.id || 'anonymous')
       
-      if (history.length === 0) {
-        // Se não há histórico, mostrar mensagem de boas-vindas
+      // Verificar se history é um array válido
+      if (!Array.isArray(history) || history.length === 0) {
+        // Se não há histórico ou dados inválidos, mostrar mensagem de boas-vindas
         setMessages([{
           id: 'welcome',
           type: 'bot',

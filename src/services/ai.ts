@@ -24,8 +24,18 @@ export class AIService {
    * Obter todas as conversas do usuário
    */
   static async getConversations(userId: string): Promise<AIConversation[]> {
-    const response = await apiClient.get(`/ai/conversations?userId=${userId}`);
-    return response.data;
+    try {
+      const response = await apiClient.get(`/ai/conversations?userId=${userId}`);
+      // Verificar se a resposta é um array válido
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+      console.warn('API retornou dados inválidos para conversas:', response.data);
+      return [];
+    } catch (error) {
+      console.error('Erro ao carregar histórico:', error);
+      return [];
+    }
   }
 
   /**

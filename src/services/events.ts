@@ -522,11 +522,20 @@ export class EventsService {
     limit = 10,
     userId?: string
   ): Promise<Event[]> {
-    const params = new URLSearchParams({ limit: limit.toString() });
-    if (userId) params.append('userId', userId);
+    try {
+      const params = new URLSearchParams({ limit: limit.toString() });
+      if (userId) params.append('userId', userId);
 
-    const response = await apiClient.get(`/events/upcoming?${params.toString()}`);
-    return response.data;
+      const response = await apiClient.get(`/events/upcoming?${params.toString()}`);
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+      console.warn('API retornou dados inválidos para eventos próximos:', response.data);
+      return [];
+    } catch (error) {
+      console.error('Erro ao buscar eventos:', error);
+      return [];
+    }
   }
 
   /**

@@ -613,10 +613,20 @@ export class GamificationService {
     timestamp: string;
     metadata?: Record<string, any>;
   }[]> {
-    const response = await apiClient.get(
-      `/gamification/users/${userId}/activities?limit=${limit}`
-    );
-    return response.data;
+    try {
+      const response = await apiClient.get(
+        `/gamification/users/${userId}/activities?limit=${limit}`
+      );
+      // Verificar se a resposta é um array válido
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+      console.warn('API retornou dados inválidos para atividades recentes:', response.data);
+      return [];
+    } catch (error) {
+      console.error('Erro ao buscar atividades recentes:', error);
+      return [];
+    }
   }
 
   /**
