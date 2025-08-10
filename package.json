@@ -26,7 +26,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "npx vite build",
+    "build": "vite build",
     "build:custom": "node build.cjs",
     "preview": "vite preview",
 
