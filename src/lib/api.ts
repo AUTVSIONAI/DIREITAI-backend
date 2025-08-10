@@ -5,6 +5,9 @@ import { supabase } from './supabase';
 // Configuração base da API
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
 
+// Log da URL da API para debug
+console.log('🔗 API Base URL:', API_BASE_URL);
+
 class ApiClientImpl implements ApiClient {
   private axiosInstance: AxiosInstance;
   private metrics: ApiMetrics = {
