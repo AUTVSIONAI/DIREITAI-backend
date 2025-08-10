@@ -26,7 +26,8 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node build.cjs",
+    "build:vite": "vite build",
     "preview": "vite preview",
 
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
