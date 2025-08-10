@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://direitai-backend.vercel.app/api/$1"
+      "destination": "https://backend-3664q8n8m-oseias-gomes-projects.vercel.app/api/$1"
     },
     {
       "source": "/(.*)",
