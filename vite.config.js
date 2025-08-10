@@ -20,15 +20,17 @@ export default defineConfig({
     host: true,
   },
   
-  // Configurações de build simplificadas
+  // Configurações de build otimizadas para Vercel
   build: {
     outDir: 'dist',
     sourcemap: false,
     target: 'es2015',
     chunkSizeWarningLimit: 1000,
-    // Reduzir preload automático
-    modulePreload: {
-      polyfill: false,
+    rollupOptions: {
+      external: [],
+      output: {
+        manualChunks: undefined,
+      },
     },
   },
   
