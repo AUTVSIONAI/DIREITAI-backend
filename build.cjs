@@ -1,33 +1,22 @@
 #!/usr/bin/env node
 
-// Custom build script to handle Vercel permission issues
+// Custom build script for Vercel compatibility
 const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
 
 try {
-  console.log('Starting custom build process...');
+  console.log('Starting Vercel-compatible build process...');
   
-  // Make vite executable
-  const vitePath = path.join(__dirname, 'node_modules', '.bin', 'vite');
-  if (fs.existsSync(vitePath)) {
-    try {
-      fs.chmodSync(vitePath, '755');
-      console.log('Set vite permissions successfully');
-    } catch (err) {
-      console.log('Could not set vite permissions:', err.message);
-    }
-  }
-  
-  // Run vite build directly
+  // Run vite build directly via Node.js
   console.log('Running vite build...');
   execSync('node node_modules/vite/bin/vite.js build', {
     stdio: 'inherit',
-    cwd: __dirname
+    cwd: __dirname,
+    env: { ...process.env, NODE_ENV: 'production' }
   });
   
   console.log('Build completed successfully!');
 } catch (error) {
   console.error('Build failed:', error.message);
+  console.error('Error details:', error);
   process.exit(1);
 }
