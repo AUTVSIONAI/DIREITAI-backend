@@ -33,6 +33,13 @@ export default defineConfig({
       },
     },
   },
+
+  // Configurações para resolver problemas de Node.js modules
+  define: {
+    global: 'globalThis',
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString()),
+  },
   
   // Configurações de resolução
   resolve: {
@@ -64,11 +71,8 @@ export default defineConfig({
       '@heroicons/react/24/outline',
       '@heroicons/react/24/solid',
     ],
+    exclude: ['@supabase/realtime-js'],
   },
   
-  // Configurações de ambiente
-  define: {
-    __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
-    __BUILD_DATE__: JSON.stringify(new Date().toISOString()),
-  },
+
 });
