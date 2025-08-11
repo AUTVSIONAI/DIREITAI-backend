@@ -20,6 +20,11 @@ class ApiClientImpl implements ApiClient {
 
   constructor() {
     try {
+      // Verificar se axios está disponível
+      if (typeof axios === 'undefined') {
+        throw new Error('Axios não está disponível');
+      }
+
       // Inicializar com configuração mais defensiva
       this.axiosInstance = axios.create({
         baseURL: API_BASE_URL,
@@ -31,24 +36,87 @@ class ApiClientImpl implements ApiClient {
         validateStatus: (status) => status < 500,
       });
       
-      // Garantir que defaults.headers existe
-      if (!this.axiosInstance.defaults) {
-        this.axiosInstance.defaults = {};
-      }
-      if (!this.axiosInstance.defaults.headers) {
-        this.axiosInstance.defaults.headers = {};
-      }
-      if (!this.axiosInstance.defaults.headers.common) {
-        this.axiosInstance.defaults.headers.common = {};
-      }
+      // Verificação robusta da estrutura do axios
+      this.ensureAxiosStructure();
+      
     } catch (error) {
       console.error('Erro ao criar instância do Axios:', error);
       // Fallback para configuração mínima
-      this.axiosInstance = axios.create();
-      this.axiosInstance.defaults = this.axiosInstance.defaults || {};
-      this.axiosInstance.defaults.headers = this.axiosInstance.defaults.headers || {};
-      this.axiosInstance.defaults.headers.common = this.axiosInstance.defaults.headers.common || {};
+      try {
+        this.axiosInstance = axios.create();
+        this.ensureAxiosStructure();
+      } catch (fallbackError) {
+        console.error('Erro crítico na inicialização do Axios:', fallbackError);
+        // Criar um mock básico se tudo falhar
+        this.axiosInstance = this.createMockAxios();
+      }
     }
+  }
+
+  private ensureAxiosStructure() {
+    // Garantir que a estrutura do axios existe
+    if (!this.axiosInstance) {
+      throw new Error('Instância do Axios não foi criada');
+    }
+    
+    if (!this.axiosInstance.defaults) {
+      this.axiosInstance.defaults = {};
+    }
+    
+    if (!this.axiosInstance.defaults.headers) {
+      this.axiosInstance.defaults.headers = {};
+    }
+    
+    if (!this.axiosInstance.defaults.headers.common) {
+      this.axiosInstance.defaults.headers.common = {};
+    }
+    
+    if (!this.axiosInstance.defaults.headers.get) {
+      this.axiosInstance.defaults.headers.get = {};
+    }
+    
+    if (!this.axiosInstance.defaults.headers.post) {
+      this.axiosInstance.defaults.headers.post = {};
+    }
+    
+    if (!this.axiosInstance.defaults.headers.put) {
+      this.axiosInstance.defaults.headers.put = {};
+    }
+    
+    if (!this.axiosInstance.defaults.headers.delete) {
+      this.axiosInstance.defaults.headers.delete = {};
+    }
+  }
+
+  private createMockAxios() {
+    // Criar um mock básico do axios em caso de falha crítica
+    const mockAxios = {
+      defaults: {
+        headers: {
+          common: {},
+          get: {},
+          post: {},
+          put: {},
+          delete: {}
+        }
+      },
+      interceptors: {
+        request: {
+          use: () => {}
+        },
+        response: {
+          use: () => {}
+        }
+      },
+      request: () => Promise.reject(new Error('Axios não disponível')),
+      get: () => Promise.reject(new Error('Axios não disponível')),
+      post: () => Promise.reject(new Error('Axios não disponível')),
+      put: () => Promise.reject(new Error('Axios não disponível')),
+      delete: () => Promise.reject(new Error('Axios não disponível'))
+    };
+    
+    return mockAxios as any;
+  }
 
     // Interceptor para adicionar token de autenticação
     this.axiosInstance.interceptors.request.use(

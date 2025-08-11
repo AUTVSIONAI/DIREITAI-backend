@@ -23,13 +23,17 @@ export default defineConfig({
   // Configurações de build otimizadas para Vercel
   build: {
     outDir: 'dist',
-    sourcemap: false,
+    sourcemap: true, // Habilitar sourcemaps para debug
     target: 'es2015',
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       external: [],
       output: {
-        manualChunks: undefined,
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          router: ['react-router-dom'],
+          axios: ['axios'],
+        },
       },
     },
   },
