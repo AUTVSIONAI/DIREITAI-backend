@@ -17,29 +17,48 @@ console.log('🔧 fetch disponível:', typeof fetch);
 console.log('🔧 globalThis.Headers:', typeof globalThis?.Headers);
 console.log('🔧 globalThis.fetch:', typeof globalThis?.fetch);
 
+// Verificar se as dependências estão disponíveis
+console.log('🔧 Verificando dependências...');
+console.log('🔧 createClient type:', typeof createClient);
+console.log('🔧 createClient:', createClient);
+
 // Criar cliente Supabase com configurações específicas para produção
 let supabase;
 try {
   console.log('Criando cliente Supabase...');
   
-  // Configuração mínima e segura para todos os ambientes
-  const clientOptions = {
-    auth: {
-      autoRefreshToken: true,
-      persistSession: true,
-      detectSessionInUrl: false
-    }
-  };
+  // Verificar parâmetros antes de criar o cliente
+  console.log('🔧 Parâmetros para createClient:');
+  console.log('🔧 URL válida:', typeof supabaseUrl === 'string' && supabaseUrl.length > 0);
+  console.log('🔧 Key válida:', typeof supabaseAnonKey === 'string' && supabaseAnonKey.length > 0);
   
-  console.log('🚀 Criando cliente com configuração mínima...');
+  // Teste sem opções primeiro
+  console.log('🚀 Tentando criar cliente sem opções...');
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
+  console.log('✅ Cliente Supabase criado sem opções!');
   
-  supabase = createClient(supabaseUrl, supabaseAnonKey, clientOptions);
-  
-  console.log('✅ Cliente Supabase criado com sucesso!');
 } catch (error) {
   console.error('❌ Erro ao criar cliente Supabase:', error);
-  console.error('Stack trace:', error.stack);
-  supabase = null;
+  console.error('❌ Error name:', error.name);
+  console.error('❌ Error message:', error.message);
+  console.error('❌ Stack trace:', error.stack);
+  
+  // Tentar criar com configuração mínima como fallback
+  try {
+    console.log('🔄 Tentando com configuração mínima...');
+    const clientOptions = {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false
+      }
+    };
+    supabase = createClient(supabaseUrl, supabaseAnonKey, clientOptions);
+    console.log('✅ Cliente criado com configuração mínima!');
+  } catch (fallbackError) {
+    console.error('❌ Erro no fallback:', fallbackError);
+    supabase = null;
+  }
 }
 
 // Fallback para cliente mock se não foi possível criar o cliente real
