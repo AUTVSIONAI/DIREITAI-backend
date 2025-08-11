@@ -17,22 +17,47 @@ console.log('🔧 fetch disponível:', typeof fetch);
 console.log('🔧 globalThis.Headers:', typeof globalThis?.Headers);
 console.log('🔧 globalThis.fetch:', typeof globalThis?.fetch);
 
-// Criar cliente Supabase
+// Criar cliente Supabase com configurações específicas para produção
 let supabase;
 try {
   console.log('Criando cliente Supabase...');
   
-  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  // Configurações específicas para diferentes ambientes
+  const clientOptions = {
     auth: {
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: true
+      detectSessionInUrl: true,
+      flowType: 'pkce'
+    },
+    global: {
+      headers: {
+        'X-Client-Info': 'direitai-frontend'
+      }
+    },
+    db: {
+      schema: 'public'
+    },
+    realtime: {
+      params: {
+        eventsPerSecond: 10
+      }
     }
-  });
+  };
   
-  console.log('Cliente Supabase criado com sucesso!');
+  // Em produção, remover algumas configurações que podem causar problemas
+  if (import.meta.env.PROD) {
+    console.log('🚀 Modo produção detectado, ajustando configurações...');
+    delete clientOptions.global;
+    clientOptions.auth.detectSessionInUrl = false;
+  }
+  
+  supabase = createClient(supabaseUrl, supabaseAnonKey, clientOptions);
+  
+  console.log('✅ Cliente Supabase criado com sucesso!');
 } catch (error) {
-  console.error('Erro ao criar cliente Supabase:', error);
+  console.error('❌ Erro ao criar cliente Supabase:', error);
+  console.error('Stack trace:', error.stack);
   supabase = null;
 }
 
