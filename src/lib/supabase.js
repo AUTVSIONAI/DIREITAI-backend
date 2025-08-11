@@ -4,8 +4,45 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://vussgslenvyztckeuyap.supabase.co'
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo'
 
-// Criar cliente Supabase
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Criar cliente Supabase com verificações de segurança
+let supabase;
+try {
+  // Verificar se as APIs necessárias estão disponíveis
+  if (typeof fetch === 'undefined' || typeof Headers === 'undefined') {
+    throw new Error('APIs necessárias não disponíveis');
+  }
+  
+  // Criar cliente com configurações mínimas
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  });
+} catch (error) {
+  console.error('Erro ao criar cliente Supabase:', error);
+  
+  // Cliente mock como fallback
+  supabase = {
+    auth: {
+      getUser: () => Promise.resolve({ data: { user: null }, error: null }),
+      signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
+      signUp: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
+      signOut: () => Promise.resolve({ error: null }),
+      resend: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') })
+    },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          single: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') })
+        })
+      })
+    })
+  };
+}
+
+export { supabase };
 
 // Função para verificar se o usuário está autenticado
 export const isAuthenticated = async () => {
