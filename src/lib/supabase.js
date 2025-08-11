@@ -29,13 +29,28 @@ const createSupabaseClient = () => {
     return createClient(supabaseUrl, supabaseAnonKey, options);
   } catch (error) {
     console.error('Erro ao criar cliente Supabase:', error);
-    // Retornar um cliente mock em caso de erro
+    // Retornar um cliente mock completo em caso de erro
     return {
       auth: {
         getUser: () => Promise.resolve({ data: { user: null }, error: null }),
         signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
         signUp: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
-        signOut: () => Promise.resolve({ error: null })
+        signOut: () => Promise.resolve({ error: null }),
+        onAuthStateChange: (callback) => {
+          // Simular callback inicial com usuário null
+          if (typeof callback === 'function') {
+            setTimeout(() => callback('SIGNED_OUT', null), 0);
+          }
+          // Retornar estrutura esperada pelo AuthProvider
+          return {
+            data: {
+              subscription: {
+                unsubscribe: () => console.log('Mock subscription unsubscribed')
+              }
+            }
+          };
+        },
+        getSession: () => Promise.resolve({ data: { session: null }, error: null })
       },
       from: () => ({
         select: () => ({
