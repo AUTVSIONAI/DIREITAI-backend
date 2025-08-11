@@ -22,166 +22,39 @@ console.log('🔧 Verificando dependências...');
 console.log('🔧 createClient type:', typeof createClient);
 console.log('🔧 createClient:', createClient);
 
-// Polyfill para Headers se necessário
-function ensureHeaders() {
-  if (typeof Headers === 'undefined' || !Headers.prototype.set) {
-    console.log('🔧 Criando polyfill para Headers...');
-    
-    // Polyfill básico para Headers
-    globalThis.Headers = class Headers {
-      constructor(init) {
-        this._headers = new Map();
-        if (init) {
-          if (init instanceof Headers) {
-            init._headers.forEach((value, key) => {
-              this._headers.set(key.toLowerCase(), value);
-            });
-          } else if (Array.isArray(init)) {
-            init.forEach(([key, value]) => {
-              this._headers.set(key.toLowerCase(), String(value));
-            });
-          } else if (typeof init === 'object') {
-            Object.entries(init).forEach(([key, value]) => {
-              this._headers.set(key.toLowerCase(), String(value));
-            });
-          }
-        }
-      }
-      
-      set(name, value) {
-        this._headers.set(name.toLowerCase(), String(value));
-      }
-      
-      get(name) {
-        return this._headers.get(name.toLowerCase()) || null;
-      }
-      
-      has(name) {
-        return this._headers.has(name.toLowerCase());
-      }
-      
-      delete(name) {
-        this._headers.delete(name.toLowerCase());
-      }
-      
-      append(name, value) {
-        const existing = this.get(name);
-        if (existing) {
-          this.set(name, existing + ', ' + value);
-        } else {
-          this.set(name, value);
-        }
-      }
-      
-      forEach(callback) {
-        this._headers.forEach((value, key) => {
-          callback(value, key, this);
-        });
-      }
-      
-      keys() {
-        return this._headers.keys();
-      }
-      
-      values() {
-        return this._headers.values();
-      }
-      
-      entries() {
-        return this._headers.entries();
-      }
-    };
-  }
-}
-
-// Verificar se as APIs necessárias estão disponíveis
-function checkBrowserAPIs() {
-  // Garantir que Headers existe
-  ensureHeaders();
-  
-  const checks = {
-    Headers: typeof Headers !== 'undefined',
-    fetch: typeof fetch !== 'undefined',
-    URL: typeof URL !== 'undefined',
-    AbortController: typeof AbortController !== 'undefined'
-  };
-  
-  console.log('🔧 Verificação de APIs do browser:', checks);
-  
-  // Verificar se Headers tem as propriedades necessárias
-  if (checks.Headers) {
-    try {
-      const testHeaders = new Headers();
-      console.log('🔧 Headers.prototype.set:', typeof testHeaders.set);
-      console.log('🔧 Headers.prototype.get:', typeof testHeaders.get);
-      console.log('🔧 Headers.prototype.has:', typeof testHeaders.has);
-    } catch (e) {
-      console.error('❌ Erro ao testar Headers:', e);
-      checks.Headers = false;
-    }
-  }
-  
-  return checks;
-}
-
-// Criar cliente Supabase com configurações específicas para produção
+// Criar cliente Supabase de forma simplificada
 let supabase;
 
-// Verificar APIs do browser primeiro
-const browserAPIs = checkBrowserAPIs();
-const allAPIsAvailable = Object.values(browserAPIs).every(Boolean);
-
-if (!allAPIsAvailable) {
-  console.error('❌ APIs do browser não estão disponíveis:', browserAPIs);
-  supabase = null;
-} else {
-  try {
-    console.log('Criando cliente Supabase...');
-    
-    // Verificar parâmetros antes de criar o cliente
-    console.log('🔧 Parâmetros para createClient:');
-    console.log('🔧 URL válida:', typeof supabaseUrl === 'string' && supabaseUrl.length > 0);
-    console.log('🔧 Key válida:', typeof supabaseAnonKey === 'string' && supabaseAnonKey.length > 0);
-    
-    // Configuração mais robusta para produção
-    const clientOptions = {
-      auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: false,
-        flowType: 'pkce'
-      },
-      global: {
-        headers: {
-          'X-Client-Info': 'direitai-web'
-        }
-      }
-    };
-    
-    console.log('🚀 Tentando criar cliente com configuração robusta...');
-    supabase = createClient(supabaseUrl, supabaseAnonKey, clientOptions);
-    console.log('✅ Cliente Supabase criado com sucesso!');
-    
-  } catch (error) {
-    console.error('❌ Erro ao criar cliente Supabase:', error);
-    console.error('❌ Error name:', error.name);
-    console.error('❌ Error message:', error.message);
-    console.error('❌ Stack trace:', error.stack);
-    
-    // Tentar criar com configuração mínima como fallback
-    try {
-      console.log('🔄 Tentando com configuração mínima...');
-      supabase = createClient(supabaseUrl, supabaseAnonKey);
-      console.log('✅ Cliente criado com configuração mínima!');
-    } catch (fallbackError) {
-      console.error('❌ Erro no fallback:', fallbackError);
-      supabase = null;
+try {
+  console.log('🚀 Criando cliente Supabase...');
+  
+  // Criar cliente com configuração mínima
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true
     }
+  });
+  
+  console.log('✅ Cliente Supabase criado com sucesso!');
+  
+} catch (error) {
+  console.error('❌ Erro ao criar cliente Supabase:', error);
+  
+  // Fallback sem configurações
+  try {
+    console.log('🔄 Tentando fallback sem configurações...');
+    supabase = createClient(supabaseUrl, supabaseAnonKey);
+    console.log('✅ Cliente criado com fallback!');
+  } catch (fallbackError) {
+    console.error('❌ Erro no fallback:', fallbackError);
+    supabase = null;
   }
 }
 
 // Fallback para cliente mock se não foi possível criar o cliente real
 if (!supabase) {
+  console.log('⚠️ Usando cliente mock - Supabase não disponível');
   
   // Fallback para cliente mock em caso de erro
   supabase = {
