@@ -6,7 +6,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIU
 console.log('🔧 Supabase URL:', supabaseUrl);
 console.log('🔧 Supabase Key (first 20 chars):', supabaseAnonKey?.substring(0, 20) + '...');
 
-// Função para criar cliente Supabase com tratamento de erros
+// Função para criar cliente Supabase com configurações mínimas
 let supabase;
 try {
   console.log('🚀 Iniciando criação do cliente Supabase...');
@@ -25,13 +25,8 @@ try {
   
   console.log('✅ APIs necessárias estão disponíveis');
   
-  supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      autoRefreshToken: true,
-      persistSession: true,
-      detectSessionInUrl: true
-    }
-  });
+  // Criar cliente com configurações mínimas para evitar erro de headers
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
   
   console.log('✅ Cliente Supabase criado com sucesso');
 } catch (error) {
