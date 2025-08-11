@@ -4,13 +4,21 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://vussgslenvyztckeuyap.supabase.co'
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo'
 
+console.log('Supabase URL:', supabaseUrl);
+console.log('Supabase Key:', supabaseAnonKey ? 'Definida' : 'Não definida');
+
 // Criar cliente Supabase com verificações de segurança
 let supabase;
 try {
   // Verificar se as APIs necessárias estão disponíveis
-  if (typeof fetch === 'undefined' || typeof Headers === 'undefined') {
-    throw new Error('APIs necessárias não disponíveis');
+  if (typeof fetch === 'undefined') {
+    throw new Error('fetch API não disponível');
   }
+  if (typeof Headers === 'undefined') {
+    throw new Error('Headers API não disponível');
+  }
+  
+  console.log('Criando cliente Supabase...');
   
   // Criar cliente com configurações mínimas
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -18,8 +26,13 @@ try {
       autoRefreshToken: false,
       persistSession: false,
       detectSessionInUrl: false
+    },
+    global: {
+      fetch: fetch
     }
   });
+  
+  console.log('Cliente Supabase criado com sucesso');
 } catch (error) {
   console.error('Erro ao criar cliente Supabase:', error);
   
