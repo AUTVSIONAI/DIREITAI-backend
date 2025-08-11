@@ -1,5 +1,29 @@
 import { createClient } from '@supabase/supabase-js'
 
+// Polyfills para garantir compatibilidade
+if (typeof globalThis.Headers === 'undefined') {
+  globalThis.Headers = class Headers {
+    constructor(init) {
+      this._headers = new Map();
+      if (init) {
+        if (init instanceof Headers) {
+          init.forEach((value, key) => this.set(key, value));
+        } else if (Array.isArray(init)) {
+          init.forEach(([key, value]) => this.set(key, value));
+        } else if (typeof init === 'object') {
+          Object.entries(init).forEach(([key, value]) => this.set(key, value));
+        }
+      }
+    }
+    set(name, value) { this._headers.set(name.toLowerCase(), String(value)); }
+    get(name) { return this._headers.get(name.toLowerCase()) || null; }
+    has(name) { return this._headers.has(name.toLowerCase()); }
+    delete(name) { this._headers.delete(name.toLowerCase()); }
+    forEach(callback) { this._headers.forEach((value, key) => callback(value, key, this)); }
+    *[Symbol.iterator]() { for (const [key, value] of this._headers) yield [key, value]; }
+  };
+}
+
 // Configurações do Supabase
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://vussgslenvyztckeuyap.supabase.co'
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo'
@@ -10,15 +34,9 @@ console.log('Supabase Key:', supabaseAnonKey ? 'Definida' : 'Não definida');
 // Criar cliente Supabase com verificações de segurança
 let supabase;
 try {
-  // Verificar se as APIs necessárias estão disponíveis
-  if (typeof fetch === 'undefined') {
-    throw new Error('fetch API não disponível');
-  }
-  if (typeof Headers === 'undefined') {
-    throw new Error('Headers API não disponível');
-  }
-  
-  console.log('Criando cliente Supabase...');
+  console.log('Verificando APIs...');
+  console.log('fetch disponível:', typeof fetch !== 'undefined');
+  console.log('Headers disponível:', typeof Headers !== 'undefined');
   
   // Criar cliente com configurações mínimas
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -28,7 +46,8 @@ try {
       detectSessionInUrl: false
     },
     global: {
-      fetch: fetch
+      fetch: globalThis.fetch || fetch,
+      Headers: globalThis.Headers || Headers
     }
   });
   
