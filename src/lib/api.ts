@@ -51,6 +51,9 @@ class ApiClientImpl implements ApiClient {
         this.axiosInstance = this.createMockAxios();
       }
     }
+    
+    // Configurar interceptors
+    this.setupInterceptors();
   }
 
   private ensureAxiosStructure() {
@@ -118,6 +121,7 @@ class ApiClientImpl implements ApiClient {
     return mockAxios as any;
   }
 
+  private setupInterceptors() {
     // Interceptor para adicionar token de autenticação
     this.axiosInstance.interceptors.request.use(
       async (config) => {
