@@ -3,67 +3,72 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://vussgslenvyztckeuyap.supabase.co'
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo'
 
+console.log('🔧 Supabase URL:', supabaseUrl);
+console.log('🔧 Supabase Key (first 20 chars):', supabaseAnonKey?.substring(0, 20) + '...');
+
 // Função para criar cliente Supabase com tratamento de erros
-const createSupabaseClient = () => {
-  try {
-    // Verificar se as variáveis de ambiente estão definidas
-    if (!supabaseUrl || !supabaseAnonKey) {
-      console.error('Supabase URL ou chave anônima não definidas');
-      throw new Error('Configuração do Supabase inválida');
+let supabase;
+try {
+  console.log('🚀 Iniciando criação do cliente Supabase...');
+  
+  // Verificar se fetch está disponível
+  if (typeof fetch === 'undefined') {
+    console.error('❌ Fetch não está disponível');
+    throw new Error('Fetch não disponível');
+  }
+  
+  // Verificar se Headers está disponível
+  if (typeof Headers === 'undefined') {
+    console.error('❌ Headers não está disponível');
+    throw new Error('Headers não disponível');
+  }
+  
+  console.log('✅ APIs necessárias estão disponíveis');
+  
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true
     }
-
-    // Configurações do cliente com tratamento de headers
-    const options = {
-      auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: true
-      },
-      global: {
-        headers: {
-          'Content-Type': 'application/json'
+  });
+  
+  console.log('✅ Cliente Supabase criado com sucesso');
+} catch (error) {
+  console.error('❌ Erro ao criar cliente Supabase:', error);
+  
+  // Cliente mock como fallback
+  supabase = {
+    auth: {
+      getUser: () => Promise.resolve({ data: { user: null }, error: null }),
+      signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
+      signUp: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
+      signOut: () => Promise.resolve({ error: null }),
+      onAuthStateChange: (callback) => {
+        if (typeof callback === 'function') {
+          setTimeout(() => callback('SIGNED_OUT', null), 0);
         }
-      }
-    };
-
-    return createClient(supabaseUrl, supabaseAnonKey, options);
-  } catch (error) {
-    console.error('Erro ao criar cliente Supabase:', error);
-    // Retornar um cliente mock completo em caso de erro
-    return {
-      auth: {
-        getUser: () => Promise.resolve({ data: { user: null }, error: null }),
-        signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
-        signUp: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
-        signOut: () => Promise.resolve({ error: null }),
-        onAuthStateChange: (callback) => {
-          // Simular callback inicial com usuário null
-          if (typeof callback === 'function') {
-            setTimeout(() => callback('SIGNED_OUT', null), 0);
-          }
-          // Retornar estrutura esperada pelo AuthProvider
-          return {
-            data: {
-              subscription: {
-                unsubscribe: () => console.log('Mock subscription unsubscribed')
-              }
+        return {
+          data: {
+            subscription: {
+              unsubscribe: () => console.log('Mock subscription unsubscribed')
             }
-          };
-        },
-        getSession: () => Promise.resolve({ data: { session: null }, error: null })
+          }
+        };
       },
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            single: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') })
-          })
+      getSession: () => Promise.resolve({ data: { session: null }, error: null })
+    },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          single: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') })
         })
       })
-    };
-  }
-};
+    })
+  };
+}
 
-export const supabase = createSupabaseClient();
+export { supabase };
 
 // Função para verificar se o usuário está autenticado
 export const getCurrentUser = async () => {
