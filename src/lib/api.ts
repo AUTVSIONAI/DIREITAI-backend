@@ -19,13 +19,24 @@ class ApiClientImpl implements ApiClient {
   };
 
   constructor() {
+    // Inicializar com configuração mais defensiva
     this.axiosInstance = axios.create({
       baseURL: API_BASE_URL,
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
       },
+      // Garantir que defaults.headers seja inicializado
+      validateStatus: (status) => status < 500,
     });
+    
+    // Garantir que defaults.headers existe
+    if (!this.axiosInstance.defaults.headers) {
+      this.axiosInstance.defaults.headers = {};
+    }
+    if (!this.axiosInstance.defaults.headers.common) {
+      this.axiosInstance.defaults.headers.common = {};
+    }
 
     // Interceptor para adicionar token de autenticação
     this.axiosInstance.interceptors.request.use(
@@ -112,11 +123,15 @@ class ApiClientImpl implements ApiClient {
       
       console.log('✅ Request successful:', response.status, response.statusText);
       
+      // Verificação defensiva para response e headers
+      const safeResponse = response || {};
+      const safeHeaders = safeResponse.headers || {};
+      
       return {
-        data: response.data,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers || {},
+        data: safeResponse.data,
+        status: safeResponse.status || 200,
+        statusText: safeResponse.statusText,
+        headers: safeHeaders,
         success: true
       };
     } catch (error: any) {
