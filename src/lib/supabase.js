@@ -41,11 +41,8 @@ let supabase;
 try {
   console.log('Criando cliente Supabase real...');
   
+  // Configuração mais simples sem global headers
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: {
-      fetch: globalThis.fetch,
-      headers: globalThis.Headers
-    },
     auth: {
       autoRefreshToken: true,
       persistSession: true,
