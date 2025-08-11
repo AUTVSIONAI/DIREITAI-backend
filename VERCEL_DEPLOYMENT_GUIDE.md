@@ -30,7 +30,7 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 VITE_MAPBOX_TOKEN=pk.eyJ1IjoiZGlyZWl0YWkiLCJhIjoiY21kejNneXVmMDhrZzJpcHkxNDI3a3A1eiJ9.XDUKcah1_a8WQhD8Xyghew
 VITE_STRIPE_PUBLISHABLE_KEY=[SUA_CHAVE_PUBLICA_STRIPE]
 NODE_ENV=production
-VITE_API_URL=https://seu-backend-vercel-url.vercel.app/api
+VITE_API_URL=https://direitai-backend.vercel.app/api
 ```
 
 #### **Backend (Projeto DIREITAI-backend)**
