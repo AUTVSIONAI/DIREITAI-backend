@@ -116,7 +116,7 @@ class ApiClientImpl implements ApiClient {
         data: response.data,
         status: response.status,
         statusText: response.statusText,
-        headers: response.headers,
+        headers: response.headers || {},
         success: true
       };
     } catch (error: any) {
@@ -199,11 +199,19 @@ class ApiClientImpl implements ApiClient {
   }
 
   setAuthToken(token: string): void {
+    if (!this.axiosInstance.defaults.headers) {
+      this.axiosInstance.defaults.headers = {};
+    }
+    if (!this.axiosInstance.defaults.headers.common) {
+      this.axiosInstance.defaults.headers.common = {};
+    }
     this.axiosInstance.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   }
 
   clearAuthToken(): void {
-    delete this.axiosInstance.defaults.headers.common['Authorization'];
+    if (this.axiosInstance.defaults.headers?.common) {
+      delete this.axiosInstance.defaults.headers.common['Authorization'];
+    }
   }
 
   getMetrics(): ApiMetrics {
