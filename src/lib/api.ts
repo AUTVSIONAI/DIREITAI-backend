@@ -31,6 +31,11 @@ class ApiClientImpl implements ApiClient {
     this.axiosInstance.interceptors.request.use(
       async (config) => {
         try {
+          // Garantir que headers existe
+          if (!config.headers) {
+            config.headers = {};
+          }
+          
           // Tentar obter o token de forma mais direta
           const { data: { session } } = await supabase.auth.getSession();
           
