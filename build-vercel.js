@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // Custom build script for Vercel to avoid permission issues
-const { build } = require('vite');
-const path = require('path');
+import { build } from 'vite';
+import path from 'path';
 
 async function buildApp() {
   try {
