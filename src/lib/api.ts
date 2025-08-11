@@ -19,30 +19,45 @@ class ApiClientImpl implements ApiClient {
   };
 
   constructor() {
-    // Inicializar com configuração mais defensiva
-    this.axiosInstance = axios.create({
-      baseURL: API_BASE_URL,
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      // Garantir que defaults.headers seja inicializado
-      validateStatus: (status) => status < 500,
-    });
-    
-    // Garantir que defaults.headers existe
-    if (!this.axiosInstance.defaults.headers) {
-      this.axiosInstance.defaults.headers = {};
-    }
-    if (!this.axiosInstance.defaults.headers.common) {
-      this.axiosInstance.defaults.headers.common = {};
+    try {
+      // Inicializar com configuração mais defensiva
+      this.axiosInstance = axios.create({
+        baseURL: API_BASE_URL,
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        // Garantir que defaults.headers seja inicializado
+        validateStatus: (status) => status < 500,
+      });
+      
+      // Garantir que defaults.headers existe
+      if (!this.axiosInstance.defaults) {
+        this.axiosInstance.defaults = {};
+      }
+      if (!this.axiosInstance.defaults.headers) {
+        this.axiosInstance.defaults.headers = {};
+      }
+      if (!this.axiosInstance.defaults.headers.common) {
+        this.axiosInstance.defaults.headers.common = {};
+      }
+    } catch (error) {
+      console.error('Erro ao criar instância do Axios:', error);
+      // Fallback para configuração mínima
+      this.axiosInstance = axios.create();
+      this.axiosInstance.defaults = this.axiosInstance.defaults || {};
+      this.axiosInstance.defaults.headers = this.axiosInstance.defaults.headers || {};
+      this.axiosInstance.defaults.headers.common = this.axiosInstance.defaults.headers.common || {};
     }
 
     // Interceptor para adicionar token de autenticação
     this.axiosInstance.interceptors.request.use(
       async (config) => {
         try {
-          // Garantir que headers existe
+          // Garantir que config existe e tem estrutura válida
+          if (!config) {
+            config = {};
+          }
           if (!config.headers) {
             config.headers = {};
           }
@@ -66,7 +81,12 @@ class ApiClientImpl implements ApiClient {
             }
           }
         } catch (error) {
+          console.error('Erro no interceptor de requisição:', error);
           console.warn('Erro ao obter sessão do Supabase:', error);
+          // Retornar config básico em caso de erro
+          if (!config) {
+            config = { headers: {} };
+          }
         }
         
         // Métricas
@@ -254,8 +274,24 @@ class ApiClientImpl implements ApiClient {
   }
 }
 
+// Função para criar instância do cliente API de forma segura
+let _apiClientInstance: ApiClientImpl | null = null;
+
+export const getApiClient = (): ApiClientImpl => {
+  if (!_apiClientInstance) {
+    try {
+      _apiClientInstance = new ApiClientImpl();
+    } catch (error) {
+      console.error('Erro ao inicializar cliente API:', error);
+      // Fallback para uma instância básica
+      _apiClientInstance = new ApiClientImpl();
+    }
+  }
+  return _apiClientInstance;
+};
+
 // Instância singleton do cliente API
-export const apiClient = new ApiClientImpl();
+export const apiClient = getApiClient();
 
 // Exportar também a classe para testes
 export { ApiClientImpl };
