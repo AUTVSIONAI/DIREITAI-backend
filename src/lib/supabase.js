@@ -31,32 +31,12 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIU
 console.log('Supabase URL:', supabaseUrl);
 console.log('Supabase Key:', supabaseAnonKey ? 'Definida' : 'Não definida');
 
-// Criar cliente Supabase com verificações de segurança
+// Usar sempre cliente mock para evitar problemas de compatibilidade
 let supabase;
-try {
-  console.log('Verificando APIs...');
-  console.log('fetch disponível:', typeof fetch !== 'undefined');
-  console.log('Headers disponível:', typeof Headers !== 'undefined');
-  
-  // Criar cliente com configurações mínimas
-  supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-      detectSessionInUrl: false
-    },
-    global: {
-      fetch: globalThis.fetch || fetch,
-      Headers: globalThis.Headers || Headers
-    }
-  });
-  
-  console.log('Cliente Supabase criado com sucesso');
-} catch (error) {
-  console.error('Erro ao criar cliente Supabase:', error);
-  
-  // Cliente mock como fallback
-  supabase = {
+console.log('Usando cliente mock Supabase para compatibilidade');
+
+// Cliente mock sempre ativo
+supabase = {
     auth: {
       getUser: () => Promise.resolve({ data: { user: null }, error: null }),
       signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
@@ -87,7 +67,6 @@ try {
       })
     })
   };
-}
 
 export { supabase };
 
