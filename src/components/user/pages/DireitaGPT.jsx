@@ -97,25 +97,75 @@ const DireitaGPT = () => {
     setMessages(prev => [...prev, userMessage])
 
     try {
-      const response = await AIService.sendMessage({
-        message: messageToSend,
-        userId: userProfile?.id || 'anonymous',
-        type: 'direitagpt',
-        conversationId: conversationId.current
-      })
+      let botMessage;
+      
+      // Tentar usar o backend real primeiro
+      try {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api'}/ai/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+          },
+          body: JSON.stringify({
+            message: messageToSend,
+            conversation_id: conversationId.current
+          })
+        })
 
-      // Adicionar resposta da IA
-      const botMessage = {
-        id: Date.now() + 1,
-        type: 'bot',
-        content: response.content,
-        timestamp: new Date(),
-        model: response.model || 'DireitaGPT'
+        if (response.ok) {
+          const data = await response.json()
+          
+          botMessage = {
+            id: Date.now() + 1,
+            type: 'bot',
+            content: data.response,
+            timestamp: new Date(),
+            model: data.model || 'DireitaGPT'
+          }
+          
+          conversationId.current = data.conversation_id
+          setCurrentModel(data.model || 'DireitaGPT')
+          setIsConnected(true)
+        } else {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+      } catch (backendError) {
+        console.warn('Backend não disponível, usando respostas locais:', backendError)
+        
+        // Fallback para respostas locais conservadoras
+        const conservativeResponses = {
+          economia: 'A economia brasileira precisa de mais liberdade econômica e menos intervenção estatal. O livre mercado é fundamental para o crescimento sustentável.',
+          família: 'A família é a base da sociedade e deve ser protegida. Os valores tradicionais são fundamentais para uma sociedade próspera.',
+          educação: 'A educação deve focar nos valores cívicos e no patriotismo, ensinando às crianças o amor pela pátria e pelos valores cristãos.',
+          segurança: 'A segurança pública é prioridade. Precisamos apoiar nossas forças policiais e o combate efetivo à criminalidade.',
+          valores: 'Os valores cristãos e conservadores são fundamentais para a construção de uma sociedade justa e próspera.',
+          default: 'Como conservador, acredito na importância de preservarmos nossos valores tradicionais, a família brasileira e a soberania nacional.'
+        }
+        
+        const lowerMessage = messageToSend.toLowerCase()
+        let responseContent = conservativeResponses.default
+        
+        for (const [key, response] of Object.entries(conservativeResponses)) {
+          if (key !== 'default' && lowerMessage.includes(key)) {
+            responseContent = response
+            break
+          }
+        }
+        
+        botMessage = {
+          id: Date.now() + 1,
+          type: 'bot',
+          content: responseContent,
+          timestamp: new Date(),
+          model: 'DireitaGPT (Local)'
+        }
+        
+        setCurrentModel('DireitaGPT (Local)')
+        setIsConnected(false)
       }
 
       setMessages(prev => [...prev, botMessage])
-      conversationId.current = response.conversationId
-      setCurrentModel(response.model || 'DireitaGPT')
 
     } catch (error) {
       console.error('Erro ao enviar mensagem:', error)
@@ -171,7 +221,7 @@ const DireitaGPT = () => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     )
   }
@@ -181,8 +231,8 @@ const DireitaGPT = () => {
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-200">
         <div className="flex items-center space-x-3">
-          <div className="p-2 bg-red-100 rounded-lg">
-            <Bot className="h-6 w-6 text-red-600" />
+          <div className="p-2 bg-blue-100 rounded-lg">
+            <Bot className="h-6 w-6 text-blue-600" />
           </div>
           <div>
             <h2 className="text-lg font-semibold text-gray-900">DireitaGPT</h2>
@@ -209,7 +259,7 @@ const DireitaGPT = () => {
           </button>
           <button
             onClick={clearConversation}
-            className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+            className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
             title="Limpar conversa"
           >
             <Trash2 className="h-5 w-5" />
@@ -228,13 +278,13 @@ const DireitaGPT = () => {
           >
             <div className={`p-2 rounded-lg ${
               message.type === 'user' 
-                ? 'bg-blue-100' 
-                : 'bg-red-100'
+                ? 'bg-gray-100' 
+                : 'bg-blue-100'
             }`}>
               {message.type === 'user' ? (
                 <User className="h-5 w-5 text-blue-600" />
               ) : (
-                <Bot className="h-5 w-5 text-red-600" />
+                <Bot className="h-5 w-5 text-blue-600" />
               )}
             </div>
             
@@ -295,7 +345,7 @@ const DireitaGPT = () => {
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder="Digite sua mensagem..."
-              className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+              className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               rows={1}
               style={{
                 minHeight: '44px',
@@ -312,7 +362,7 @@ const DireitaGPT = () => {
           <button
             onClick={handleSendMessage}
             disabled={!inputMessage.trim() || isTyping}
-            className="p-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Send className="h-5 w-5" />
           </button>

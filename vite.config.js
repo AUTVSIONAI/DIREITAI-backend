@@ -76,8 +76,8 @@ export default defineConfig({
       '@headlessui/react',
       '@heroicons/react/24/outline',
       '@heroicons/react/24/solid',
+      '@supabase/supabase-js',
     ],
-    exclude: ['@supabase/realtime-js', '@supabase/supabase-js'],
   },
   
 
