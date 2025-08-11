@@ -30,7 +30,22 @@ try {
       signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
       signUp: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
       signOut: () => Promise.resolve({ error: null }),
-      resend: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') })
+      resend: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
+      onAuthStateChange: (callback) => {
+        console.log('Mock onAuthStateChange called');
+        // Simular callback inicial
+        if (typeof callback === 'function') {
+          setTimeout(() => callback('SIGNED_OUT', null), 0);
+        }
+        return {
+          data: {
+            subscription: {
+              unsubscribe: () => console.log('Mock subscription unsubscribed')
+            }
+          }
+        };
+      },
+      getSession: () => Promise.resolve({ data: { session: null }, error: null })
     },
     from: () => ({
       select: () => ({
