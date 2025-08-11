@@ -3,7 +3,52 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://vussgslenvyztckeuyap.supabase.co'
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo'
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Função para criar cliente Supabase com tratamento de erros
+const createSupabaseClient = () => {
+  try {
+    // Verificar se as variáveis de ambiente estão definidas
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error('Supabase URL ou chave anônima não definidas');
+      throw new Error('Configuração do Supabase inválida');
+    }
+
+    // Configurações do cliente com tratamento de headers
+    const options = {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true
+      },
+      global: {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    };
+
+    return createClient(supabaseUrl, supabaseAnonKey, options);
+  } catch (error) {
+    console.error('Erro ao criar cliente Supabase:', error);
+    // Retornar um cliente mock em caso de erro
+    return {
+      auth: {
+        getUser: () => Promise.resolve({ data: { user: null }, error: null }),
+        signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
+        signUp: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
+        signOut: () => Promise.resolve({ error: null })
+      },
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            single: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') })
+          })
+        })
+      })
+    };
+  }
+};
+
+export const supabase = createSupabaseClient();
 
 // Função para verificar se o usuário está autenticado
 export const getCurrentUser = async () => {

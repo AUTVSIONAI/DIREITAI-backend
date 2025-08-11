@@ -11,8 +11,8 @@ if (typeof globalThis === 'undefined') {
   }
 }
 
-// Polyfill para Headers se não existir
-if (typeof Headers === 'undefined') {
+// Polyfill para Headers se não existir (mais conservador)
+if (typeof globalThis.Headers === 'undefined' && typeof window !== 'undefined' && typeof window.Headers === 'undefined') {
   globalThis.Headers = class Headers {
     constructor(init) {
       this._headers = new Map();
@@ -82,8 +82,8 @@ if (typeof Headers === 'undefined') {
   };
 }
 
-// Garantir que fetch existe (para compatibilidade)
-if (typeof fetch === 'undefined') {
+// Garantir que fetch existe (para compatibilidade) - mais conservador
+if (typeof globalThis.fetch === 'undefined' && typeof window !== 'undefined' && typeof window.fetch === 'undefined') {
   // Implementação básica de fetch usando XMLHttpRequest
   globalThis.fetch = function(url, options = {}) {
     return new Promise((resolve, reject) => {
