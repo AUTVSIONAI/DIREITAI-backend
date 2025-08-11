@@ -31,12 +31,34 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIU
 console.log('Supabase URL:', supabaseUrl);
 console.log('Supabase Key:', supabaseAnonKey ? 'Definida' : 'Não definida');
 
-// Usar sempre cliente mock para evitar problemas de compatibilidade
-let supabase;
-console.log('Usando cliente mock Supabase para compatibilidade');
+// Verificar disponibilidade das APIs necessárias
+console.log('Verificando APIs disponíveis:');
+console.log('fetch disponível:', typeof globalThis.fetch !== 'undefined');
+console.log('Headers disponível:', typeof globalThis.Headers !== 'undefined');
 
-// Cliente mock sempre ativo
-supabase = {
+// Criar cliente Supabase real
+let supabase;
+try {
+  console.log('Criando cliente Supabase real...');
+  
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      fetch: globalThis.fetch,
+      headers: globalThis.Headers
+    },
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true
+    }
+  });
+  
+  console.log('Cliente Supabase criado com sucesso!');
+} catch (error) {
+  console.error('Erro ao criar cliente Supabase:', error);
+  
+  // Fallback para cliente mock em caso de erro
+  supabase = {
     auth: {
       getUser: () => Promise.resolve({ data: { user: null }, error: null }),
       signInWithPassword: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
@@ -45,7 +67,6 @@ supabase = {
       resend: () => Promise.resolve({ data: null, error: new Error('Cliente Supabase não disponível') }),
       onAuthStateChange: (callback) => {
         console.log('Mock onAuthStateChange called');
-        // Simular callback inicial
         if (typeof callback === 'function') {
           setTimeout(() => callback('SIGNED_OUT', null), 0);
         }
@@ -55,7 +76,7 @@ supabase = {
               unsubscribe: () => console.log('Mock subscription unsubscribed')
             }
           }
-        };
+        }
       },
       getSession: () => Promise.resolve({ data: { session: null }, error: null })
     },
@@ -67,6 +88,7 @@ supabase = {
       })
     })
   };
+}
 
 export { supabase };
 
