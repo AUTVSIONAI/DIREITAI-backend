@@ -1,37 +1,38 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Verificar se as APIs necessárias estão disponíveis
-const hasRequiredAPIs = typeof globalThis.fetch !== 'undefined' && typeof globalThis.Headers !== 'undefined';
-console.log('APIs nativas disponíveis:', hasRequiredAPIs);
+// Debug das variáveis de ambiente
+console.log('🔍 Debug Supabase - import.meta.env:', import.meta.env);
+console.log('🔍 Debug Supabase - VITE_SUPABASE_URL:', import.meta.env.VITE_SUPABASE_URL);
+console.log('🔍 Debug Supabase - VITE_SUPABASE_ANON_KEY:', import.meta.env.VITE_SUPABASE_ANON_KEY);
 
 // Configurações do Supabase
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://vussgslenvyztckeuyap.supabase.co'
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo'
 
-console.log('Supabase URL:', supabaseUrl);
-console.log('Supabase Key:', supabaseAnonKey ? 'Definida' : 'Não definida');
+console.log('🔧 Supabase URL:', supabaseUrl);
+console.log('🔧 Supabase Key:', supabaseAnonKey ? 'Definida' : 'Não definida');
+console.log('🔧 Environment:', import.meta.env.MODE);
+console.log('🔧 Headers disponível:', typeof Headers);
+console.log('🔧 fetch disponível:', typeof fetch);
+console.log('🔧 globalThis.Headers:', typeof globalThis?.Headers);
+console.log('🔧 globalThis.fetch:', typeof globalThis?.fetch);
 
-// Usar cliente Supabase real apenas se as APIs nativas estiverem disponíveis
+// Criar cliente Supabase
 let supabase;
-if (hasRequiredAPIs) {
-  try {
-    console.log('Criando cliente Supabase real com APIs nativas...');
-    
-    supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: true
-      }
-    });
-    
-    console.log('Cliente Supabase criado com sucesso!');
-  } catch (error) {
-    console.error('Erro ao criar cliente Supabase:', error);
-    supabase = null;
-  }
-} else {
-  console.log('APIs nativas não disponíveis, usando cliente mock');
+try {
+  console.log('Criando cliente Supabase...');
+  
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true
+    }
+  });
+  
+  console.log('Cliente Supabase criado com sucesso!');
+} catch (error) {
+  console.error('Erro ao criar cliente Supabase:', error);
   supabase = null;
 }
 
