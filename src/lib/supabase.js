@@ -22,35 +22,16 @@ let supabase;
 try {
   console.log('Criando cliente Supabase...');
   
-  // Configurações específicas para diferentes ambientes
+  // Configuração mínima e segura para todos os ambientes
   const clientOptions = {
     auth: {
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: true,
-      flowType: 'pkce'
-    },
-    global: {
-      headers: {
-        'X-Client-Info': 'direitai-frontend'
-      }
-    },
-    db: {
-      schema: 'public'
-    },
-    realtime: {
-      params: {
-        eventsPerSecond: 10
-      }
+      detectSessionInUrl: false
     }
   };
   
-  // Em produção, remover algumas configurações que podem causar problemas
-  if (import.meta.env.PROD) {
-    console.log('🚀 Modo produção detectado, ajustando configurações...');
-    delete clientOptions.global;
-    clientOptions.auth.detectSessionInUrl = false;
-  }
+  console.log('🚀 Criando cliente com configuração mínima...');
   
   supabase = createClient(supabaseUrl, supabaseAnonKey, clientOptions);
   
