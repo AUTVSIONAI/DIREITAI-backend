@@ -30,6 +30,39 @@ export const getCurrentUser = async () => {
   }
 }
 
+// Função para fazer login
+export const signIn = async (email, password) => {
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+    if (error) throw error
+    return { data, error: null }
+  } catch (error) {
+    console.error('Erro ao fazer login:', error)
+    return { data: null, error }
+  }
+}
+
+// Função para fazer cadastro
+export const signUp = async (email, password, userData = {}) => {
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: userData
+      }
+    })
+    if (error) throw error
+    return { data, error: null }
+  } catch (error) {
+    console.error('Erro ao fazer cadastro:', error)
+    return { data: null, error }
+  }
+}
+
 // Função para fazer logout
 export const signOut = async () => {
   try {
@@ -39,5 +72,37 @@ export const signOut = async () => {
   } catch (error) {
     console.error('Erro ao fazer logout:', error)
     return { success: false, error }
+  }
+}
+
+// Função para verificar se é admin
+export const isAdmin = async (userId) => {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single()
+    
+    if (error) throw error
+    return data?.role === 'admin'
+  } catch (error) {
+    console.error('Erro ao verificar se é admin:', error)
+    return false
+  }
+}
+
+// Função para reenviar email de confirmação
+export const resendConfirmation = async (email) => {
+  try {
+    const { data, error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email
+    })
+    if (error) throw error
+    return { data, error: null }
+  } catch (error) {
+    console.error('Erro ao reenviar confirmação:', error)
+    return { data: null, error }
   }
 }
