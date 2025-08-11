@@ -26,7 +26,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "node build-vercel.js",
+    "build": "vite build",
     "build:vite": "vite build",
     "build:custom": "node build.cjs",
     "preview": "vite preview",
