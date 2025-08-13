@@ -19,8 +19,8 @@ const DireitaGPT = () => {
   const voiceControlsRef = useRef(null)
   const [lastBotMessage, setLastBotMessage] = useState('')
 
-  // Função para retry com exponential backoff
-  const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
+  // Função para retry com exponential backoff (versão robusta para produção)
+  const retryWithBackoff = async (fn, maxRetries = 5, baseDelay = 3000) => {
     let lastError
     
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -29,16 +29,22 @@ const DireitaGPT = () => {
       } catch (error) {
         lastError = error
         
-        // Verifica se é erro 429 (rate limit)
+        // Verifica se é erro 429 (rate limit) - detecção mais robusta
         const is429Error = 
           error.status === 429 || 
           error.message?.includes('429') ||
-          (error.message && error.message.includes('status: 429'))
+          (error.message && error.message.includes('status: 429')) ||
+          (typeof error === 'object' && error.response?.status === 429) ||
+          (error.toString && error.toString().includes('429'))
         
         if (is429Error && attempt < maxRetries) {
-          const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 2000
-          console.log(`⏳ Rate limit atingido (429), tentando novamente em ${Math.round(delay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`)
-          await new Promise(resolve => setTimeout(resolve, delay))
+          // Delay mais agressivo para produção com jitter maior
+          const exponentialDelay = baseDelay * Math.pow(3, attempt)
+          const jitter = Math.random() * 5000
+          const totalDelay = exponentialDelay + jitter
+          
+          console.log(`🚫 Rate limit em produção (429), aguardando ${Math.round(totalDelay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`)
+          await new Promise(resolve => setTimeout(resolve, totalDelay))
         } else {
           throw error
         }
@@ -151,9 +157,19 @@ const DireitaGPT = () => {
             })
           })
           
+          // Verificação robusta para erro 429
           if (res.status === 429) {
-            const error = new Error('Rate limit exceeded')
+            const error = new Error(`Rate limit exceeded - status: ${res.status}`)
             error.status = 429
+            error.response = { status: 429 }
+            console.error('🚫 Erro 429 detectado:', { status: res.status, statusText: res.statusText })
+            throw error
+          }
+          
+          if (!res.ok) {
+            const error = new Error(`HTTP error! status: ${res.status}`)
+            error.status = res.status
+            error.response = { status: res.status }
             throw error
           }
           

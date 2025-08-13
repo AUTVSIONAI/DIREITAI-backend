@@ -100,12 +100,12 @@ export class AIService {
   }
 
   /**
-   * Função auxiliar para retry com exponential backoff
+   * Função auxiliar para retry com exponential backoff (versão robusta para produção)
    */
   private static async retryWithBackoff<T>(
     fn: () => Promise<T>,
-    maxRetries = 3,
-    baseDelay = 1000
+    maxRetries = 5,
+    baseDelay = 3000
   ): Promise<T> {
     let lastError: Error;
     
@@ -115,23 +115,28 @@ export class AIService {
       } catch (error: any) {
         lastError = error;
         
-        // Verifica se é erro 429 (rate limit)
+        // Verifica se é erro 429 (rate limit) - detecção mais robusta
         const is429Error = 
           error.message?.includes('429') || 
           error.status === 429 || 
           error.response?.status === 429 ||
-          (error.message && error.message.includes('status: 429'));
+          (error.message && error.message.includes('status: 429')) ||
+          (typeof error === 'object' && error.response?.status === 429) ||
+          (error.toString && error.toString().includes('429'));
         
         // Se não é erro 429 ou é a última tentativa, lança o erro
         if (!is429Error || attempt === maxRetries) {
           throw error;
         }
         
-        // Calcula o delay com exponential backoff (mais agressivo)
-        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 2000;
-        console.log(`⏳ Rate limit atingido (429), tentando novamente em ${Math.round(delay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`);
+        // Delay mais agressivo para produção com jitter maior
+        const exponentialDelay = baseDelay * Math.pow(3, attempt);
+        const jitter = Math.random() * 5000;
+        const totalDelay = exponentialDelay + jitter;
         
-        await new Promise(resolve => setTimeout(resolve, delay));
+        console.log(`🚫 Rate limit em produção (429), aguardando ${Math.round(totalDelay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`);
+        
+        await new Promise(resolve => setTimeout(resolve, totalDelay));
       }
     }
     
