@@ -14,27 +14,15 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Permitir requisições sem origin (mobile apps, etc.)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'https://direitai.com',
-      'https://www.direitai.com',
-      'https://direitai.vercel.app',
-      'https://direitai-backend.vercel.app',
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://localhost:5121'
-    ];
-    
-    // Permitir qualquer subdomínio do Vercel em desenvolvimento
-    if (origin.includes('.vercel.app') || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    callback(new Error('Não permitido pelo CORS'));
-  },
+  origin: [
+    'https://direitai.com',
+    'https://www.direitai.com',
+    'https://direitai.vercel.app',
+    'https://direitai-backend.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:5121'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
