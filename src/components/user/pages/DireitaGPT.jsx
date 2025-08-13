@@ -19,6 +19,23 @@ const DireitaGPT = () => {
   const voiceControlsRef = useRef(null)
   const [lastBotMessage, setLastBotMessage] = useState('')
 
+  // Função para retry com exponential backoff
+  const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn()
+      } catch (error) {
+        if (error.status === 429 && attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt - 1)
+          console.log(`Rate limit hit, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+        } else {
+          throw error
+        }
+      }
+    }
+  }
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -109,16 +126,26 @@ const DireitaGPT = () => {
         const { data: { session } } = await supabase.auth.getSession()
         const token = session?.access_token || ''
         
-        const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api'}/ai/chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            message: messageToSend,
-            conversation_id: conversationId.current
+        const response = await retryWithBackoff(async () => {
+          const res = await fetch(`${import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api'}/ai/chat`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              message: messageToSend,
+              conversation_id: conversationId.current
+            })
           })
+          
+          if (res.status === 429) {
+            const error = new Error('Rate limit exceeded')
+            error.status = 429
+            throw error
+          }
+          
+          return res
         })
 
         if (response.ok) {

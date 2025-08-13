@@ -90,11 +90,45 @@ export class AIService {
    * Enviar mensagem para IA
    */
   static async sendMessage(data: SendMessageData): Promise<AIMessage> {
-    const response = await apiClient.post(
-      `/ai/conversations/${data.conversationId}/messages`,
-      data
-    );
-    return response.data;
+    return await this.retryWithBackoff(async () => {
+      const response = await apiClient.post(
+        `/ai/conversations/${data.conversationId}/messages`,
+        data
+      );
+      return response.data;
+    });
+  }
+
+  /**
+   * Função auxiliar para retry com exponential backoff
+   */
+  private static async retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<T> {
+    let lastError: Error;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error: any) {
+        lastError = error;
+        
+        // Se não é erro 429 ou é a última tentativa, lança o erro
+        if (error.message?.includes('429') === false || attempt === maxRetries) {
+          throw error;
+        }
+        
+        // Calcula o delay com exponential backoff
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        console.log(`⏳ Rate limit atingido, tentando novamente em ${Math.round(delay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError!;
   }
 
   /**
@@ -107,19 +141,23 @@ export class AIService {
     onError: (error: Error) => void
   ): Promise<void> {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
-      const response = await fetch(`${apiUrl}/ai/chat/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        },
-        body: JSON.stringify(data)
-      });
+      const response = await this.retryWithBackoff(async () => {
+        const apiUrl = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
+        const res = await fetch(`${apiUrl}/ai/chat/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+          },
+          body: JSON.stringify(data)
+        });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+
+        return res;
+      });
 
       const reader = response.body?.getReader();
       if (!reader) {
