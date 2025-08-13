@@ -278,8 +278,6 @@ const VoiceControls = forwardRef(({
       )}
     </div>
   );
-};
-
 });
 
 export default VoiceControls;
