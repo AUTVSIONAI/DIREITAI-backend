@@ -111,7 +111,8 @@ app.use('*', (req, res) => {
 });
 
 // Para Vercel, não usamos app.listen
-if (process.env.NODE_ENV !== 'production') {
+// Só executa app.listen em desenvolvimento local
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🚀 Servidor DireitaAI iniciado!`);
     console.log(`📊 Porta: ${PORT}`);
