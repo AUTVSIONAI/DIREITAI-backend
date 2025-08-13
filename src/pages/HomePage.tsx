@@ -19,7 +19,7 @@ const HomePage = () => {
   const features = [
     {
       icon: MessageSquare,
-      title: 'DireitaGPT',
+      title: 'DireitaIA',
       description: 'IA especializada em política conservadora e direita brasileira'
     },
     {
@@ -49,7 +49,7 @@ const HomePage = () => {
     {
       name: 'Maria Santos',
       role: 'Advogada',
-      content: 'O DireitaGPT me ajuda muito nas discussões políticas do dia a dia.',
+      content: 'O DireitaIA me ajuda muito nas discussões políticas do dia a dia.',
       rating: 5
     },
     {
@@ -240,7 +240,7 @@ const HomePage = () => {
             <div>
               <h3 className="font-semibold mb-4">Recursos</h3>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white">DireitaGPT</a></li>
+                <li><a href="#" className="hover:text-white">DireitaIA</a></li>
                 <li><a href="#" className="hover:text-white">Eventos</a></li>
                 <li><a href="#" className="hover:text-white">Comunidade</a></li>
                 <li><a href="#" className="hover:text-white">Loja</a></li>

@@ -723,11 +723,11 @@ export class StoreService {
   /**
    * Criar sessão de checkout do Stripe para produtos
    */
-  static async createCheckoutSession(): Promise<{
+  static async createCheckoutSession(items?: any[]): Promise<{
     sessionId: string;
     url: string;
   }> {
-    const response = await apiClient.post('/store/checkout');
+    const response = await apiClient.post('/store/checkout', { items });
     return response.data;
   }
 

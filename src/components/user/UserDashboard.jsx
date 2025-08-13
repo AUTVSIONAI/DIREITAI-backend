@@ -12,6 +12,7 @@ import Achievements from './pages/Achievements'
 import Plan from './pages/Plan'
 import Overview from './pages/Overview'
 import StoreSuccess from './pages/StoreSuccess'
+import PaymentSuccess from './pages/PaymentSuccess'
 
 const UserDashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -36,6 +37,7 @@ const UserDashboard = () => {
             <Route path="/ranking" element={<Ranking />} />
             <Route path="/store" element={<Store />} />
             <Route path="/store/success" element={<StoreSuccess />} />
+            <Route path="/payment/success" element={<PaymentSuccess />} />
             <Route path="/creative" element={<CreativeAI />} />
             <Route path="/achievements" element={<Achievements />} />
             <Route path="/plan" element={<Plan />} />

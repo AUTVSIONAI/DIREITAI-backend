@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { MapPin, Clock, Users, Award, AlertCircle, CheckCircle } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
+import { supabase } from '../../../lib/supabase'
 
 const CheckIn = () => {
   const { user } = useAuth()
@@ -19,9 +20,13 @@ const CheckIn = () => {
   const fetchEvents = async () => {
     try {
       setLoadingEvents(true)
-      const response = await fetch('/api/events?status=ativo&limit=20', {
+      // Obter token do Supabase
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token || ''
+      
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5120'}/api/events?status=ativo&limit=20`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       })
@@ -92,10 +97,14 @@ const CheckIn = () => {
     setLoading(true)
     
     try {
-      const response = await fetch('/api/checkins', {
+      // Obter token do Supabase
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token || ''
+      
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5120'}/api/checkins`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

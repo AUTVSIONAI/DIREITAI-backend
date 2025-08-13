@@ -1,9 +1,11 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Sparkles, Image, Video, MessageSquare, Quote, Download, Copy, Share2, Wand2, RefreshCw, Save, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
+import { useNavigate } from 'react-router-dom'
 
 const CreativeAI = () => {
   const { userProfile } = useAuth()
+  const navigate = useNavigate()
   const [selectedTemplate, setSelectedTemplate] = useState('post')
   const [prompt, setPrompt] = useState('')
   const [generatedContent, setGeneratedContent] = useState('')
@@ -12,6 +14,32 @@ const CreativeAI = () => {
   const [showHistory, setShowHistory] = useState(false)
   const [selectedTone, setSelectedTone] = useState('profissional')
   const [selectedLength, setSelectedLength] = useState('medio')
+  const [usageStats, setUsageStats] = useState({ today: 0, limit: 2, remaining: 2, plan: 'gratuito' })
+  const [limitError, setLimitError] = useState('')
+
+  // Carregar estatísticas de uso ao montar o componente
+  useEffect(() => {
+    const loadUsageStats = async () => {
+      try {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5120'}/api/creative-ai/usage`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setUsageStats(data.usage)
+        }
+      } catch (error) {
+        console.error('Erro ao carregar estatísticas:', error)
+      }
+    }
+
+    if (userProfile) {
+      loadUsageStats()
+    }
+  }, [userProfile])
 
   const templates = [
     {
@@ -98,44 +126,93 @@ const CreativeAI = () => {
     
     setIsGenerating(true)
     
-    // Simulação de geração de conteúdo
-    setTimeout(() => {
-      const template = templates.find(t => t.id === selectedTemplate)
-      let mockContent = ''
-      
-      switch (selectedTemplate) {
-        case 'post':
-          mockContent = `🇧🇷 ${prompt}\n\nNossos valores conservadores são a base de uma sociedade próspera e justa. É fundamental que defendamos nossos princípios com coragem e determinação.\n\n#ValoresConservadores #BrasilForte #Patriotismo`
-          break
-        case 'meme':
-          mockContent = `💡 IDEIA PARA MEME:\n\nTítulo: "${prompt}"\n\nTexto sugerido: "Quando você entende que responsabilidade fiscal significa um futuro melhor para seus filhos"\n\nImagem sugerida: Pessoa sorrindo olhando para uma planilha de gastos\n\n#ResponsabilidadeFiscal #FuturoMelhor`
-          break
-        case 'video':
-          mockContent = `🎬 ROTEIRO DE VÍDEO\n\n[ABERTURA - 0:00-0:15]\nOlá, patriotas! Hoje vamos falar sobre ${prompt.toLowerCase()}.\n\n[DESENVOLVIMENTO - 0:15-1:30]\nO empreendedorismo é fundamental para o crescimento do nosso país...\n\n[CONCLUSÃO - 1:30-2:00]\nLembrem-se: cada negócio criado é um passo rumo à prosperidade nacional!`
-          break
-        case 'speech':
-          mockContent = `🎤 DISCURSO: ${prompt}\n\nCaros compatriotas,\n\nReunimo-nos hoje para celebrar e reafirmar nosso amor pela pátria. O patriotismo não é apenas um sentimento, é um compromisso diário com a excelência, com a justiça e com o progresso de nossa nação.\n\nQuando olhamos para nossa bandeira, vemos mais que cores e símbolos. Vemos a história de um povo corajoso, trabalhador e determinado...\n\nViva o Brasil! 🇧🇷`
-          break
-        default:
-          mockContent = 'Conteúdo gerado com base no seu prompt.'
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5120'}/api/creative-ai/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          prompt,
+          template: selectedTemplate,
+          tone: selectedTone,
+          length: selectedLength
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setGeneratedContent(data.content)
+        setUsageStats(data.usage)
+        setLimitError('')
+        
+        // Adicionar ao histórico
+        const newItem = {
+          id: Date.now(),
+          template: selectedTemplate,
+          prompt,
+          content: data.content,
+          createdAt: new Date().toISOString(),
+          tone: selectedTone,
+          length: selectedLength
+        }
+        setHistory(prev => [newItem, ...prev])
+      } else {
+        // Verificar se é erro de limite
+        if (response.status === 429) {
+          const errorData = await response.json()
+          setLimitError(errorData.message || 'Limite diário atingido')
+          setUsageStats({
+            today: errorData.usage || 0,
+            limit: errorData.limit || 2,
+            remaining: 0,
+            plan: errorData.plan || 'gratuito'
+          })
+          return
+        }
+        
+        // Fallback para conteúdo simulado se a API falhar
+        const template = templates.find(t => t.id === selectedTemplate)
+        let mockContent = ''
+        
+        switch (selectedTemplate) {
+          case 'post':
+            mockContent = `🇧🇷 ${prompt}\n\nNossos valores conservadores são a base de uma sociedade próspera e justa. É fundamental que defendamos nossos princípios com coragem e determinação.\n\n#ValoresConservadores #BrasilForte #Patriotismo`
+            break
+          case 'meme':
+            mockContent = `💡 IDEIA PARA MEME:\n\nTítulo: "${prompt}"\n\nTexto sugerido: "Quando você entende que responsabilidade fiscal significa um futuro melhor para seus filhos"\n\nImagem sugerida: Pessoa sorrindo olhando para uma planilha de gastos\n\n#ResponsabilidadeFiscal #FuturoMelhor`
+            break
+          case 'video':
+            mockContent = `🎬 ROTEIRO DE VÍDEO\n\n[ABERTURA - 0:00-0:15]\nOlá, patriotas! Hoje vamos falar sobre ${prompt.toLowerCase()}.\n\n[DESENVOLVIMENTO - 0:15-1:30]\nO empreendedorismo é fundamental para o crescimento do nosso país...\n\n[CONCLUSÃO - 1:30-2:00]\nLembrem-se: cada negócio criado é um passo rumo à prosperidade nacional!`
+            break
+          case 'speech':
+            mockContent = `🎤 DISCURSO: ${prompt}\n\nCaros compatriotas,\n\nReunimo-nos hoje para celebrar e reafirmar nosso amor pela pátria. O patriotismo não é apenas um sentimento, é um compromisso diário com a excelência, com a justiça e com o progresso de nossa nação.\n\nQuando olhamos para nossa bandeira, vemos mais que cores e símbolos. Vemos a história de um povo corajoso, trabalhador e determinado...\n\nViva o Brasil! 🇧🇷`
+            break
+          default:
+            mockContent = 'Conteúdo gerado com base no seu prompt.'
+        }
+        
+        setGeneratedContent(mockContent)
+        
+        // Adicionar ao histórico
+        const newItem = {
+          id: Date.now(),
+          template: selectedTemplate,
+          prompt,
+          content: mockContent,
+          createdAt: new Date().toISOString(),
+          tone: selectedTone,
+          length: selectedLength
+        }
+        setHistory(prev => [newItem, ...prev])
       }
-      
-      setGeneratedContent(mockContent)
-      
-      // Adicionar ao histórico
-      const newItem = {
-        id: Date.now(),
-        template: selectedTemplate,
-        prompt,
-        content: mockContent,
-        createdAt: new Date().toISOString(),
-        tone: selectedTone,
-        length: selectedLength
-      }
-      setHistory(prev => [newItem, ...prev])
-      
+    } catch (error) {
+      console.error('Erro ao gerar conteúdo:', error)
+      alert('Erro ao gerar conteúdo. Tente novamente.')
+    } finally {
       setIsGenerating(false)
-    }, 2000)
+    }
   }
 
   const copyToClipboard = (text) => {
@@ -185,31 +262,43 @@ const CreativeAI = () => {
       </div>
 
       {/* Usage Stats */}
-      {userProfile?.plan !== 'premium' && (
-        <div className="card bg-yellow-50 border-yellow-200">
-          <div className="flex items-center space-x-3">
-            <div className="flex items-center justify-center w-10 h-10 bg-yellow-100 rounded-lg">
-              <Sparkles className="h-5 w-5 text-yellow-600" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-medium text-yellow-900">
-                {userProfile?.plan === 'gratuito' ? 'Upgrade necessário' : 'Uso do mês'}
-              </h3>
-              <p className="text-sm text-yellow-800">
-                {userProfile?.plan === 'gratuito' 
-                  ? 'Faça upgrade para acessar a IA Criativa'
-                  : '34 de 50 criações utilizadas este mês'
-                }
-              </p>
-            </div>
-            {userProfile?.plan === 'gratuito' && (
-              <button className="btn-primary">
-                Fazer Upgrade
-              </button>
-            )}
+      <div className={`card ${limitError ? 'bg-red-50 border-red-200' : usageStats.plan === 'gratuito' ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
+        <div className="flex items-center space-x-3">
+          <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${
+            limitError ? 'bg-red-100' : usageStats.plan === 'gratuito' ? 'bg-blue-100' : 'bg-green-100'
+          }`}>
+            <Sparkles className={`h-5 w-5 ${
+              limitError ? 'text-red-600' : usageStats.plan === 'gratuito' ? 'text-blue-600' : 'text-green-600'
+            }`} />
           </div>
+          <div className="flex-1">
+            <h3 className={`font-medium ${
+              limitError ? 'text-red-900' : usageStats.plan === 'gratuito' ? 'text-blue-900' : 'text-green-900'
+            }`}>
+              {limitError ? 'Limite Atingido' : 
+               usageStats.plan === 'gratuito' ? 'Plano Patriota Gratuito' :
+               usageStats.plan === 'engajado' ? 'Plano Patriota Engajado' :
+               usageStats.plan === 'premium' ? 'Plano Patriota Premium' :
+               usageStats.plan === 'lider' ? 'Plano Patriota Líder' : 'Seu Plano'}
+            </h3>
+            <p className={`text-sm ${
+              limitError ? 'text-red-800' : usageStats.plan === 'gratuito' ? 'text-blue-800' : 'text-green-800'
+            }`}>
+              {limitError ? limitError :
+               usageStats.limit === -1 ? 'Gerações ilimitadas' :
+               `Você usou ${usageStats.today} de ${usageStats.limit} gerações hoje (${usageStats.remaining} restantes)`}
+            </p>
+          </div>
+          {(limitError || (usageStats.plan === 'gratuito' && usageStats.remaining === 0)) && (
+            <button
+              onClick={() => navigate('/plan')}
+              className="btn-primary"
+            >
+              Fazer Upgrade
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Panel - Configuration */}
@@ -313,7 +402,7 @@ const CreativeAI = () => {
                 )}
                 <button
                   onClick={generateContent}
-                  disabled={!prompt.trim() || isGenerating || userProfile?.plan === 'gratuito'}
+                  disabled={!prompt.trim() || isGenerating || (usageStats.remaining === 0 && usageStats.limit !== -1)}
                   className="btn-primary"
                 >
                   {isGenerating ? (

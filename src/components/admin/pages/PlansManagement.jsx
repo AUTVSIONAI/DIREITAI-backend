@@ -28,7 +28,7 @@ const PlansManagement = () => {
       const response = await apiClient.get('/plans/admin');
       
       if (response && response.data && response.data.success) {
-        setPlans(response.data.plans || []);
+        setPlans(response.data.data || []);
       } else {
         console.error('Erro ao buscar planos:', response?.data?.message || 'Resposta inválida');
         setPlans([]);

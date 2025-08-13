@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Send, Bot, User, Trash2, Download, Copy, Wifi, WifiOff } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import { AIService } from '../../../services/ai'
+import { supabase } from '../../../lib/supabase'
+import VoiceControls from '../VoiceControls'
 
 const DireitaGPT = () => {
   const { userProfile } = useAuth()
@@ -14,6 +16,7 @@ const DireitaGPT = () => {
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
   const conversationId = useRef(null)
+  const voiceControlsRef = useRef(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -39,9 +42,9 @@ const DireitaGPT = () => {
         setMessages([{
           id: 'welcome',
           type: 'bot',
-          content: 'Olá! Sou o DireitaGPT, sua IA conservadora. Como posso ajudá-lo hoje? Posso discutir política, economia, valores tradicionais e muito mais!',
+          content: 'Olá! Sou a Patriota IA, sua IA conservadora. Como posso ajudá-lo hoje? Posso discutir política, economia, valores tradicionais e muito mais!',
           timestamp: new Date(),
-          model: 'DireitaGPT'
+          model: 'Patriota IA'
         }])
       } else {
         // Converter histórico para formato de mensagens
@@ -59,7 +62,7 @@ const DireitaGPT = () => {
             type: 'bot',
             content: conv.aiResponse,
             timestamp: new Date(conv.createdAt),
-            model: conv.model || 'DireitaGPT'
+            model: conv.model || 'DireitaIA'
           })
         })
         setMessages(formattedMessages)
@@ -71,7 +74,7 @@ const DireitaGPT = () => {
         type: 'bot',
         content: 'Desculpe, houve um erro ao carregar o histórico. Vamos começar uma nova conversa!',
         timestamp: new Date(),
-        model: 'DireitaGPT'
+        model: 'DireitaIA'
       }])
     } finally {
       setIsLoading(false)
@@ -101,11 +104,15 @@ const DireitaGPT = () => {
       
       // Tentar usar o backend real primeiro
       try {
+        // Obter token do Supabase
+        const { data: { session } } = await supabase.auth.getSession()
+        const token = session?.access_token || ''
+        
         const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api'}/ai/chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+            'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
             message: messageToSend,
@@ -121,12 +128,17 @@ const DireitaGPT = () => {
             type: 'bot',
             content: data.response,
             timestamp: new Date(),
-            model: data.model || 'DireitaGPT'
+            model: data.model || 'DireitaIA'
           }
           
           conversationId.current = data.conversation_id
-          setCurrentModel(data.model || 'DireitaGPT')
+          setCurrentModel(data.model || 'Patriota IA')
           setIsConnected(true)
+
+          // Auto-falar a resposta da IA se habilitado
+          if (voiceControlsRef.current) {
+            voiceControlsRef.current.speakMessage(data.response)
+          }
         } else {
           throw new Error(`HTTP error! status: ${response.status}`)
         }
@@ -158,11 +170,16 @@ const DireitaGPT = () => {
           type: 'bot',
           content: responseContent,
           timestamp: new Date(),
-          model: 'DireitaGPT (Local)'
+          model: 'Patriota IA (Local)'
         }
         
-        setCurrentModel('DireitaGPT (Local)')
+        setCurrentModel('Patriota IA (Local)')
         setIsConnected(false)
+
+        // Auto-falar a resposta da IA se habilitado
+        if (voiceControlsRef.current) {
+          voiceControlsRef.current.speakMessage(responseContent)
+        }
       }
 
       setMessages(prev => [...prev, botMessage])
@@ -174,7 +191,7 @@ const DireitaGPT = () => {
         type: 'bot',
         content: 'Desculpe, houve um erro ao processar sua mensagem. Tente novamente.',
         timestamp: new Date(),
-        model: 'DireitaGPT'
+        model: 'DireitaIA'
       }
       setMessages(prev => [...prev, errorMessage])
     } finally {
@@ -195,7 +212,7 @@ const DireitaGPT = () => {
       type: 'bot',
       content: 'Conversa limpa! Como posso ajudá-lo agora?',
       timestamp: new Date(),
-      model: 'DireitaGPT'
+      model: 'DireitaIA'
     }])
     conversationId.current = null
   }
@@ -213,7 +230,7 @@ const DireitaGPT = () => {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `conversa-direitagpt-${new Date().toISOString().split('T')[0]}.txt`
+    a.download = `conversa-direitaia-${new Date().toISOString().split('T')[0]}.txt`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -235,7 +252,7 @@ const DireitaGPT = () => {
             <Bot className="h-6 w-6 text-blue-600" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">DireitaGPT</h2>
+            <h2 className="text-lg font-semibold text-gray-900">DireitaIA</h2>
             <div className="flex items-center space-x-2">
               {isConnected ? (
                 <Wifi className="h-4 w-4 text-green-500" />
@@ -243,13 +260,25 @@ const DireitaGPT = () => {
                 <WifiOff className="h-4 w-4 text-red-500" />
               )}
               <span className="text-sm text-gray-500">
-                {currentModel || 'DireitaGPT'} • {isConnected ? 'Online' : 'Offline'}
+                {currentModel || 'DireitaIA'} • {isConnected ? 'Online' : 'Offline'}
               </span>
             </div>
           </div>
         </div>
         
         <div className="flex items-center space-x-2">
+          <VoiceControls 
+            ref={voiceControlsRef}
+            onTranscription={(text) => {
+              setInputMessage(prev => prev + (prev ? ' ' : '') + text)
+              inputRef.current?.focus()
+            }}
+            onSend={() => {
+              if (inputMessage.trim()) {
+                handleSendMessage()
+              }
+            }}
+          />
           <button
             onClick={exportConversation}
             className="p-2 text-gray-400 hover:text-gray-600 transition-colors"

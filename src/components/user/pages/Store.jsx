@@ -154,7 +154,16 @@ const Store = () => {
     }
 
     try {
-      const response = await StoreService.createCheckoutSession()
+      // Preparar itens do carrinho para o checkout
+      const checkoutItems = cart.map(item => ({
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        image: item.image
+      }))
+
+      const response = await StoreService.createCheckoutSession(checkoutItems)
       if (response && response.url) {
         window.location.href = response.url
       } else {

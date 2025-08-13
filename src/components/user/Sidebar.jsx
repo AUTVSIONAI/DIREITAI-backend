@@ -19,7 +19,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
   const menuItems = [
     { path: '/dashboard', icon: Home, label: 'Visão Geral' },
     { path: '/dashboard/profile', icon: User, label: 'Perfil' },
-    { path: '/dashboard/direitagpt', icon: MessageCircle, label: 'DireitaGPT' },
+    { path: '/dashboard/direitagpt', icon: MessageCircle, label: 'DireitaIA' },
     { path: '/dashboard/checkin', icon: MapPin, label: 'Check-in' },
     { path: '/dashboard/ranking', icon: Trophy, label: 'Ranking' },
     { path: '/dashboard/store', icon: ShoppingBag, label: 'Loja' },

@@ -2,14 +2,17 @@ import React, { useState, useEffect } from 'react'
 import { Crown, Star, Zap, Check, X, Users, MessageSquare, Trophy, Shield } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import { apiClient } from '../../../lib/api'
+import { useNavigate } from 'react-router-dom'
 
 const Plan = () => {
   const { userProfile } = useAuth()
+  const navigate = useNavigate()
   const [selectedPlan, setSelectedPlan] = useState('monthly')
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const [selectedUpgrade, setSelectedUpgrade] = useState(null)
   const [plans, setPlans] = useState([])
   const [loading, setLoading] = useState(true)
+  const [processingPayment, setProcessingPayment] = useState(false)
 
   // Planos de fallback
   const fallbackPlans = [
@@ -22,7 +25,7 @@ const Plan = () => {
       color: 'gray',
       popular: false,
       features: [
-        'Acesso basico ao DireitaGPT',
+        'Acesso basico ao DireitaIA',
         'Limite de 10 consultas por dia',
         'Suporte por email'
       ],
@@ -40,7 +43,7 @@ const Plan = () => {
       color: 'blue',
       popular: true,
       features: [
-        'Acesso completo ao DireitaGPT',
+        'Acesso completo ao DireitaIA',
         'Consultas ilimitadas',
         'Suporte prioritario',
         'Recursos avancados de IA'
@@ -143,6 +146,32 @@ const Plan = () => {
     setShowUpgradeModal(true)
   }
 
+  const handleConfirmUpgrade = async () => {
+    if (!selectedUpgrade) return
+    
+    try {
+      setProcessingPayment(true)
+      
+      // Criar sessão de checkout do Stripe
+      const response = await apiClient.post('/payments/checkout', {
+        planType: selectedUpgrade.id
+      })
+      
+      if (response.data.success && response.data.data.url) {
+        // Redirecionar para o checkout do Stripe
+        window.location.href = response.data.data.url
+      } else {
+        throw new Error('Erro ao criar sessão de pagamento')
+      }
+    } catch (error) {
+      console.error('Erro ao processar upgrade:', error)
+      alert('Erro ao processar pagamento. Tente novamente.')
+    } finally {
+      setProcessingPayment(false)
+      setShowUpgradeModal(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -187,7 +216,7 @@ const Plan = () => {
             >
               Anual
               <span className="ml-1 text-xs text-green-600 font-semibold">
-                (Economize ate 20%)
+                (Economize até 20%)
               </span>
             </button>
           </div>
@@ -241,7 +270,7 @@ const Plan = () => {
 
                 <div className="px-6 pt-6 pb-8 bg-white rounded-b-lg">
                   <h4 className="text-sm font-medium text-gray-900 tracking-wide uppercase">
-                    Recursos incluidos
+                    Recursos incluídos
                   </h4>
                   <ul className="mt-6 space-y-4">
                     {plan.features.map((feature, index) => (
@@ -255,7 +284,7 @@ const Plan = () => {
                   {plan.limitations && plan.limitations.length > 0 && (
                     <div className="mt-6">
                       <h4 className="text-sm font-medium text-gray-900 tracking-wide uppercase">
-                        Limitacoes
+                        Limitações
                       </h4>
                       <ul className="mt-4 space-y-4">
                         {plan.limitations.map((limitation, index) => (
@@ -296,7 +325,7 @@ const Plan = () => {
                 </h3>
                 <div className="mt-2 px-7 py-3">
                   <p className="text-sm text-gray-500">
-                    Voce deseja fazer upgrade para o plano {selectedUpgrade.name}?
+                    Você deseja fazer upgrade para o plano {selectedUpgrade.name}?
                   </p>
                   <p className="mt-2 text-lg font-semibold text-gray-900">
                     {formatPrice(selectedPlan === 'yearly' ? selectedUpgrade.yearlyPrice : selectedUpgrade.monthlyPrice)}
@@ -311,14 +340,11 @@ const Plan = () => {
                     Cancelar
                   </button>
                   <button
-                    onClick={() => {
-                      // Aqui seria implementada a logica de upgrade
-                      console.log('Upgrade para:', selectedUpgrade)
-                      setShowUpgradeModal(false)
-                    }}
-                    className="mt-3 px-4 py-2 bg-blue-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    onClick={handleConfirmUpgrade}
+                    disabled={processingPayment}
+                    className="mt-3 px-4 py-2 bg-blue-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Confirmar
+                    {processingPayment ? 'Processando...' : 'Confirmar'}
                   </button>
                 </div>
               </div>

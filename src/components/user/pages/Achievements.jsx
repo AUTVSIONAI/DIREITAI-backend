@@ -55,7 +55,7 @@ const Achievements = () => {
     {
       id: 4,
       title: 'Conversador IA',
-      description: 'Tenha 25 conversas com o DireitaGPT',
+      description: 'Tenha 25 conversas com o DireitaIA',
       category: 'ai',
       icon: Zap,
       points: 150,
@@ -374,7 +374,7 @@ const Achievements = () => {
             <h3 className="font-medium text-blue-900 mb-1">Dicas para Conquistar Mais</h3>
             <ul className="text-sm text-blue-800 space-y-1">
               <li>• Participe regularmente de manifestações para desbloquear conquistas de check-in</li>
-              <li>• Use o DireitaGPT diariamente para progredir nas conquistas de IA</li>
+              <li>• Use o DireitaIA diariamente para progredir nas conquistas de IA</li>
               <li>• Convide amigos para ganhar pontos sociais</li>
               <li>• Mantenha uma sequência diária para conquistas especiais</li>
             </ul>

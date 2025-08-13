@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../../../hooks/useAuth'
+import { supabase } from '../../../lib/supabase'
 import { 
   MapPin, 
   MessageCircle, 
@@ -31,9 +32,13 @@ const Overview = () => {
 
   const fetchUserStats = async () => {
     try {
+      // Obter token do Supabase
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token || ''
+      
       const response = await fetch('/api/users/stats', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       })
@@ -57,9 +62,13 @@ const Overview = () => {
   const fetchRecentActivities = async () => {
     try {
       setLoading(true)
+      // Obter token do Supabase
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token || ''
+      
       const response = await fetch('/api/checkins/my-checkins?limit=5', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       })
@@ -270,7 +279,7 @@ const Overview = () => {
           <div className="flex items-center space-x-3">
             <MessageCircle className="h-8 w-8 text-blue-600" />
             <div>
-              <h4 className="font-medium text-gray-900">DireitaGPT</h4>
+              <h4 className="font-medium text-gray-900">DireitaIA</h4>
               <p className="text-sm text-gray-500">Conversar com a IA</p>
             </div>
           </div>
