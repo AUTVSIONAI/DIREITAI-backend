@@ -36,7 +36,8 @@ const Overview = () => {
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token || ''
       
-      const response = await fetch('/api/users/stats', {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api'
+      const response = await fetch(`${apiUrl}/users/stats`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -66,7 +67,8 @@ const Overview = () => {
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token || ''
       
-      const response = await fetch('/api/checkins/my-checkins?limit=5', {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api'
+      const response = await fetch(`${apiUrl}/checkins/my-checkins?limit=5`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'

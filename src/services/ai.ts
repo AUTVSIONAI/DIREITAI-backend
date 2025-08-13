@@ -107,7 +107,8 @@ export class AIService {
     onError: (error: Error) => void
   ): Promise<void> {
     try {
-      const response = await fetch('/api/ai/chat/stream', {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://direitai-backend.vercel.app/api';
+      const response = await fetch(`${apiUrl}/ai/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
