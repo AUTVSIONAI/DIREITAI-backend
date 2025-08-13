@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { Mic, MicOff, Volume2, VolumeX, Settings } from 'lucide-react';
 import { useSpeech } from '../../hooks/useSpeech';
 
-const VoiceControls = ({ 
+const VoiceControls = forwardRef(({ 
   onTranscript, 
   autoSpeak = true, 
   lastMessage = '',
   className = '' 
-}) => {
+}, ref) => {
   const {
     speak,
     stop: stopSpeaking,
@@ -27,6 +27,36 @@ const VoiceControls = ({
   const [selectedVoice, setSelectedVoice] = useState(null);
   const [speechRate, setSpeechRate] = useState(0.9);
   const [speechVolume, setSpeechVolume] = useState(1);
+
+  // Expor métodos para o componente pai
+  useImperativeHandle(ref, () => ({
+    speakMessage: (text) => {
+      if (voiceEnabled && speechSupported && text) {
+        const cleanText = text
+          .replace(/\*\*(.*?)\*\*/g, '$1') // negrito
+          .replace(/\*(.*?)\*/g, '$1') // itálico
+          .replace(/`(.*?)`/g, '$1') // código inline
+          .replace(/```[\s\S]*?```/g, '[código]') // blocos de código
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+          .replace(/#{1,6}\s/g, '') // headers
+          .replace(/\n+/g, '. ') // quebras de linha
+          .trim();
+        
+        if (cleanText) {
+          speak(cleanText, {
+            voice: selectedVoice,
+            rate: speechRate,
+            volume: speechVolume
+          });
+        }
+      }
+    },
+    stopSpeaking: () => {
+      if (speaking) {
+        stopSpeaking();
+      }
+    }
+  }), [voiceEnabled, speechSupported, speak, selectedVoice, speechRate, speechVolume, speaking, stopSpeaking]);
 
   // Configurar voz padrão (português brasileiro)
   useEffect(() => {
@@ -249,5 +279,7 @@ const VoiceControls = ({
     </div>
   );
 };
+
+});
 
 export default VoiceControls;

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { Send, Bot, User, Trash2, Download, Copy, Wifi, WifiOff } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import { AIService } from '../../../services/ai'
@@ -17,6 +17,7 @@ const DireitaGPT = () => {
   const inputRef = useRef(null)
   const conversationId = useRef(null)
   const voiceControlsRef = useRef(null)
+  const [lastBotMessage, setLastBotMessage] = useState('')
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -132,10 +133,11 @@ const DireitaGPT = () => {
           }
           
           conversationId.current = data.conversation_id
-          setCurrentModel(data.model || 'Patriota IA')
+          setCurrentModel('Patriota IA')
           setIsConnected(true)
-
-          // Auto-falar a resposta da IA se habilitado
+          setLastBotMessage(data.response)
+          
+          // Auto-falar a resposta da IA
           if (voiceControlsRef.current) {
             voiceControlsRef.current.speakMessage(data.response)
           }
@@ -175,8 +177,9 @@ const DireitaGPT = () => {
         
         setCurrentModel('Patriota IA (Local)')
         setIsConnected(false)
-
-        // Auto-falar a resposta da IA se habilitado
+        setLastBotMessage(responseContent)
+        
+        // Auto-falar a resposta da IA
         if (voiceControlsRef.current) {
           voiceControlsRef.current.speakMessage(responseContent)
         }
@@ -269,7 +272,9 @@ const DireitaGPT = () => {
         <div className="flex items-center space-x-2">
           <VoiceControls 
             ref={voiceControlsRef}
-            onTranscription={(text) => {
+            autoSpeak={true}
+            lastMessage={lastBotMessage}
+            onTranscript={(text) => {
               setInputMessage(prev => prev + (prev ? ' ' : '') + text)
               inputRef.current?.focus()
             }}
