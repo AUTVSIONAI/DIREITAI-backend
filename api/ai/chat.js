@@ -1,4 +1,9 @@
-const { supabase } = require('../../config/supabase');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 // Middleware de autenticação simplificado para Vercel
 const authenticateUser = async (req) => {
