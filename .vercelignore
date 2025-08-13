@@ -1,5 +1,6 @@
 # Development files
-.env*
+.env.local
+.env.development
 .DS_Store
 *.log
 npm-debug.log*
@@ -9,6 +10,11 @@ yarn-error.log*
 # Testing
 coverage/
 .nyc_output
+test/
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
 
 # Build artifacts
 test-*.js
@@ -25,11 +31,12 @@ check-current-user.html
 # OS
 Thumbs.db
 
-# Backend
+# Backend (exclude backend directory but keep config files)
 backend/
 
-# Documentation
+# Documentation (keep essential files)
 VERCEL_DEPLOYMENT_GUIDE.md
-readme.md
-README.md
-LICENSE
+
+# Git
+.git/
+.gitignore
