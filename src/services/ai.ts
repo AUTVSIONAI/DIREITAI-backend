@@ -115,14 +115,21 @@ export class AIService {
       } catch (error: any) {
         lastError = error;
         
+        // Verifica se é erro 429 (rate limit)
+        const is429Error = 
+          error.message?.includes('429') || 
+          error.status === 429 || 
+          error.response?.status === 429 ||
+          (error.message && error.message.includes('status: 429'));
+        
         // Se não é erro 429 ou é a última tentativa, lança o erro
-        if (error.message?.includes('429') === false || attempt === maxRetries) {
+        if (!is429Error || attempt === maxRetries) {
           throw error;
         }
         
-        // Calcula o delay com exponential backoff
-        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
-        console.log(`⏳ Rate limit atingido, tentando novamente em ${Math.round(delay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`);
+        // Calcula o delay com exponential backoff (mais agressivo)
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 2000;
+        console.log(`⏳ Rate limit atingido (429), tentando novamente em ${Math.round(delay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
       }

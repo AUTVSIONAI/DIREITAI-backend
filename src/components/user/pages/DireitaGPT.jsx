@@ -21,19 +21,31 @@ const DireitaGPT = () => {
 
   // Função para retry com exponential backoff
   const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let lastError
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         return await fn()
       } catch (error) {
-        if (error.status === 429 && attempt < maxRetries) {
-          const delay = baseDelay * Math.pow(2, attempt - 1)
-          console.log(`Rate limit hit, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`)
+        lastError = error
+        
+        // Verifica se é erro 429 (rate limit)
+        const is429Error = 
+          error.status === 429 || 
+          error.message?.includes('429') ||
+          (error.message && error.message.includes('status: 429'))
+        
+        if (is429Error && attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 2000
+          console.log(`⏳ Rate limit atingido (429), tentando novamente em ${Math.round(delay)}ms (tentativa ${attempt + 1}/${maxRetries + 1})`)
           await new Promise(resolve => setTimeout(resolve, delay))
         } else {
           throw error
         }
       }
     }
+    
+    throw lastError
   }
 
   const scrollToBottom = () => {
