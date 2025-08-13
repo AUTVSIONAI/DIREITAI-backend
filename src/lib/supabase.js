@@ -1,21 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Debug das variáveis de ambiente
-console.log('🔍 Debug Supabase - import.meta.env:', import.meta.env);
-console.log('🔍 Debug Supabase - VITE_SUPABASE_URL:', import.meta.env.VITE_SUPABASE_URL);
-console.log('🔍 Debug Supabase - VITE_SUPABASE_ANON_KEY:', import.meta.env.VITE_SUPABASE_ANON_KEY);
-
 // Configurações do Supabase
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://vussgslenvyztckeuyap.supabase.co'
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1c3Nnc2xlbnZ5enRja2V1eWFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyODE5ODUsImV4cCI6MjA2OTg1Nzk4NX0.a3WlLKS1HrSCqWuG80goBsoUaUhtpRsV8mqmTAYpIAo'
 
-console.log('🔧 Supabase URL:', supabaseUrl);
-console.log('🔧 Supabase Key:', supabaseAnonKey ? 'Definida' : 'Não definida');
-console.log('🔧 Environment:', import.meta.env.MODE);
-console.log('🔧 Headers disponível:', typeof Headers);
-console.log('🔧 fetch disponível:', typeof fetch);
-console.log('🔧 globalThis.Headers:', typeof globalThis?.Headers);
-console.log('🔧 globalThis.fetch:', typeof globalThis?.fetch);
+// Verificações básicas de conectividade
 
 // Verificar se as dependências estão disponíveis
 console.log('🔧 Verificando dependências...');
