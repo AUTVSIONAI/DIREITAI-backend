@@ -25,8 +25,7 @@
   ],
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "build": "echo 'No build step required for backend'"
+    "dev": "node server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.35.0",
