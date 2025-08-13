@@ -1,14 +1,15 @@
 {
   "version": 2,
-  "framework": "vite",
-  "buildCommand": "npm install --force && npm run build",
-  "outputDirectory": "dist",
-  "installCommand": "npm install --force",
-  "devCommand": "npm run dev",
-  "rewrites": [
+  "builds": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/server.js"
     }
   ]
 }
