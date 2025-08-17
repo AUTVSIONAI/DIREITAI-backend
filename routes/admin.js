@@ -56,6 +56,58 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
 
     const pendingModeration = moderationStats?.length || 0;
 
+    // Get recent events
+    const { data: recentEvents } = await supabase
+      .from('events')
+      .select('id, title, location, city, state, current_participants, status, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    // Get top cities by user count
+    const { data: topCities } = await supabase
+      .from('users')
+      .select('city, state')
+      .not('city', 'is', null)
+      .neq('city', '')
+      .limit(1000);
+
+    // Count users by city
+    const cityStats = {};
+    topCities?.forEach(user => {
+      const key = `${user.city}, ${user.state}`;
+      cityStats[key] = (cityStats[key] || 0) + 1;
+    });
+
+    const topCitiesFormatted = Object.entries(cityStats)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 5)
+      .map(([cityState, count]) => {
+        const [city, state] = cityState.split(', ');
+        return { city, state, users: count, growth: '+0%' };
+      });
+
+    // Get recent activities (simplified)
+    const recentActivities = [
+      {
+        id: 1,
+        type: 'user_join',
+        message: `${newUsersThisMonth} novos usuários se registraram este mês`,
+        time: 'hoje'
+      },
+      {
+        id: 2,
+        type: 'event_checkin',
+        message: `${checkinsToday} check-ins realizados hoje`,
+        time: 'hoje'
+      },
+      {
+        id: 3,
+        type: 'ai_conversation',
+        message: `${aiConversationsToday} conversas com IA iniciadas hoje`,
+        time: 'hoje'
+      }
+    ];
+
     res.json({
       statistics: {
         activeUsers,
@@ -66,6 +118,9 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
         aiConversationsToday,
         pendingModeration
       },
+      recentEvents: recentEvents || [],
+      topCities: topCitiesFormatted,
+      recentActivities,
       systemHealth: {
         database: 'healthy',
         api: 'healthy',
@@ -252,32 +307,94 @@ router.put('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
 });
 
 // Ban/unban user
-router.put('/users/:userId/ban', authenticateUser, authenticateAdmin, async (req, res) => {
+router.patch('/users/:userId/ban', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { banned, reason } = req.body;
+    const { reason } = req.body;
+
+    console.log(`🚫 Tentando banir usuário: ${userId}`);
+
+    // Primeiro verificar se o usuário existe
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('id, email, full_name')
+      .eq('id', userId)
+      .single();
+
+    if (checkError || !existingUser) {
+      console.log(`❌ Usuário não encontrado: ${userId}`);
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    console.log(`✅ Usuário encontrado: ${existingUser.email}`);
 
     const { data: user, error } = await supabase
       .from('users')
       .update({ 
-        banned: banned,
-        ban_reason: banned ? reason : null,
-        banned_at: banned ? new Date().toISOString() : null
+        banned: true,
+        ban_reason: reason || 'Banido pelo administrador',
+        banned_at: new Date().toISOString()
       })
       .eq('id', userId)
       .select()
       .single();
 
     if (error) {
+      console.log(`❌ Erro ao banir usuário: ${error.message}`);
       return res.status(400).json({ error: error.message });
     }
 
+    console.log(`✅ Usuário banido com sucesso: ${user.email}`);
+
     res.json({ 
       user, 
-      message: banned ? 'User banned successfully' : 'User unbanned successfully' 
+      message: 'User banned successfully'
     });
   } catch (error) {
     console.error('Ban user error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete user
+router.delete('/users/:userId', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    console.log(`🗑️ Tentando excluir usuário: ${userId}`);
+
+    // Primeiro, verificar se o usuário existe
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('id, email, full_name')
+      .eq('id', userId)
+      .single();
+
+    if (checkError || !existingUser) {
+      console.log(`❌ Usuário não encontrado para exclusão: ${userId}`);
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    console.log(`✅ Usuário encontrado para exclusão: ${existingUser.email}`);
+
+    // Deletar o usuário
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', userId);
+
+    if (error) {
+      console.log(`❌ Erro ao excluir usuário: ${error.message}`);
+      return res.status(400).json({ error: error.message });
+    }
+
+    console.log(`✅ Usuário excluído com sucesso: ${existingUser.email}`);
+
+    res.json({ 
+      message: 'User deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -398,7 +515,7 @@ router.get('/store/products', authenticateUser, authenticateAdmin, async (req, r
 // Create product
 router.post('/store/products', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
-    const { name, description, price, category, stock, image_url } = req.body;
+    const { name, description, price, category, stock_quantity, image } = req.body;
 
     if (!name || !price || !category) {
       return res.status(400).json({ error: 'Name, price, and category are required' });
@@ -412,8 +529,8 @@ router.post('/store/products', authenticateUser, authenticateAdmin, async (req, 
           description,
           price: parseFloat(price),
           category,
-          stock: parseInt(stock) || 0,
-          image_url,
+          stock_quantity: parseInt(stock_quantity) || 0,
+          image,
           active: true,
           created_at: new Date().toISOString()
         }
@@ -436,15 +553,15 @@ router.post('/store/products', authenticateUser, authenticateAdmin, async (req, 
 router.put('/store/products/:productId', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { productId } = req.params;
-    const { name, description, price, category, stock, image_url, active } = req.body;
+    const { name, description, price, category, stock_quantity, image, active } = req.body;
 
     const updateData = {};
     if (name !== undefined) updateData.name = name;
     if (description !== undefined) updateData.description = description;
     if (price !== undefined) updateData.price = parseFloat(price);
     if (category !== undefined) updateData.category = category;
-    if (stock !== undefined) updateData.stock = parseInt(stock);
-    if (image_url !== undefined) updateData.image_url = image_url;
+    if (stock_quantity !== undefined) updateData.stock_quantity = parseInt(stock_quantity);
+    if (image !== undefined) updateData.image = image;
     if (active !== undefined) updateData.active = active;
 
     const { data: product, error } = await supabase
@@ -995,6 +1112,70 @@ router.get('/live-map/realtime', authenticateUser, authenticateAdmin, async (req
     });
   } catch (error) {
     console.error('Live map realtime error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get city statistics
+router.get('/city-stats', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    // Get user distribution by city
+    const { data: usersByCity, error: usersError } = await supabase
+      .from('users')
+      .select('city, state')
+      .not('city', 'is', null)
+      .not('state', 'is', null);
+
+    if (usersError) {
+      console.error('Get users by city error:', usersError);
+      return res.status(400).json({ error: usersError.message });
+    }
+
+    // Get events distribution by city
+    const { data: eventsByCity, error: eventsError } = await supabase
+      .from('events')
+      .select('city, state')
+      .not('city', 'is', null)
+      .not('state', 'is', null);
+
+    if (eventsError) {
+      console.error('Get events by city error:', eventsError);
+      return res.status(400).json({ error: eventsError.message });
+    }
+
+    // Aggregate statistics by city
+    const cityStats = {};
+    
+    // Count users by city
+    usersByCity?.forEach(user => {
+      const key = `${user.city}, ${user.state}`;
+      if (!cityStats[key]) {
+        cityStats[key] = { city: user.city, state: user.state, users: 0, events: 0 };
+      }
+      cityStats[key].users++;
+    });
+
+    // Count events by city
+    eventsByCity?.forEach(event => {
+      const key = `${event.city}, ${event.state}`;
+      if (!cityStats[key]) {
+        cityStats[key] = { city: event.city, state: event.state, users: 0, events: 0 };
+      }
+      cityStats[key].events++;
+    });
+
+    // Convert to array and sort by total activity
+    const statsArray = Object.values(cityStats)
+      .map(stat => ({
+        ...stat,
+        total: stat.users + stat.events
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 20); // Top 20 cities
+
+    res.json(statsArray);
+  } catch (error) {
+    console.error('Get city stats error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

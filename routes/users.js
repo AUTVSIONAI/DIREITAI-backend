@@ -98,8 +98,13 @@ router.get('/stats', authenticateUser, async (req, res) => {
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId);
 
-    // Get AI conversations count (mock for now)
-    const aiConversations = Math.floor(Math.random() * 50) + 10;
+    // Get AI conversations count
+    const { count: aiConversationsCount } = await supabase
+      .from('ai_conversations')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    const aiConversations = aiConversationsCount || 0;
 
     res.json({
       checkins: checkinsCount || 0,
@@ -119,6 +124,8 @@ router.get('/ranking', authenticateUser, async (req, res) => {
     const { scope = 'city', period = 'month' } = req.query;
     const userId = req.user.id;
 
+    console.log('🏆 Ranking - Buscando ranking para usuário:', userId);
+
     // Get user's city for city-based ranking
     const { data: userData } = await supabase
       .from('users')
@@ -126,26 +133,57 @@ router.get('/ranking', authenticateUser, async (req, res) => {
       .eq('id', userId)
       .single();
 
-    let query = supabase
+    let userQuery = supabase
       .from('users')
-      .select('id, username, full_name, city, state, points, avatar_url')
-      .order('points', { ascending: false });
+      .select('id, username, full_name, city, state, avatar_url');
 
     // Apply scope filter
     if (scope === 'city' && userData?.city) {
-      query = query.eq('city', userData.city);
+      userQuery = userQuery.eq('city', userData.city);
     } else if (scope === 'state' && userData?.state) {
-      query = query.eq('state', userData.state);
+      userQuery = userQuery.eq('state', userData.state);
     }
 
-    const { data: rankings, error } = await query.limit(100);
+    const { data: users, error: usersError } = await userQuery.limit(100);
 
-    if (error) {
-      return res.status(400).json({ error: error.message });
+    if (usersError) {
+      console.error('❌ Ranking - Erro ao buscar usuários:', usersError);
+      return res.status(400).json({ error: usersError.message });
     }
+
+    // Calculate points for each user from points table
+    const userIds = users.map(user => user.id);
+    const { data: pointsData, error: pointsError } = await supabase
+      .from('points')
+      .select('user_id, amount')
+      .in('user_id', userIds);
+
+    if (pointsError) {
+      console.error('❌ Ranking - Erro ao buscar pontos:', pointsError);
+    }
+
+    // Calculate total points for each user
+    const userPoints = {};
+    if (pointsData) {
+      pointsData.forEach(point => {
+        if (!userPoints[point.user_id]) {
+          userPoints[point.user_id] = 0;
+        }
+        userPoints[point.user_id] += point.amount;
+      });
+    }
+
+    // Add points to users and sort by points
+    const rankings = users.map(user => ({
+      ...user,
+      points: userPoints[user.id] || 0
+    })).sort((a, b) => b.points - a.points);
 
     // Find user's position
     const userPosition = rankings.findIndex(user => user.id === userId) + 1;
+
+    console.log('🏆 Ranking - Rankings calculados:', rankings.length, 'usuários');
+    console.log('🏆 Ranking - Posição do usuário:', userPosition);
 
     res.json({
       rankings,
@@ -163,6 +201,7 @@ router.get('/ranking', authenticateUser, async (req, res) => {
 router.get('/achievements', authenticateUser, async (req, res) => {
   try {
     const userId = req.user.id;
+    console.log('🏅 Achievements - Buscando conquistas para usuário:', userId);
 
     const { data: badges, error } = await supabase
       .from('badges')
@@ -171,11 +210,65 @@ router.get('/achievements', authenticateUser, async (req, res) => {
       .order('earned_at', { ascending: false });
 
     if (error) {
+      console.error('❌ Achievements - Erro ao buscar badges:', error);
       return res.status(400).json({ error: error.message });
     }
 
-    // Mock available achievements
+    // Se não há badges, adicionar algumas conquistas iniciais
+    if (!badges || badges.length === 0) {
+      console.log('🏅 Achievements - Adicionando conquistas iniciais...');
+      const initialBadges = [
+        {
+          user_id: userId,
+          achievement_id: 'welcome',
+          earned_at: new Date().toISOString()
+        },
+        {
+          user_id: userId,
+          achievement_id: 'first_login',
+          earned_at: new Date().toISOString()
+        }
+      ];
+      
+      const { error: insertError } = await supabase
+        .from('badges')
+        .insert(initialBadges);
+        
+      if (!insertError) {
+        badges.push(...initialBadges);
+        console.log('✅ Achievements - Conquistas iniciais adicionadas');
+      }
+    }
+
+    // Available achievements
     const allAchievements = [
+      {
+        id: 'welcome',
+        name: 'Bem-vindo!',
+        description: 'Cadastrou-se na plataforma DireitaAI',
+        icon: '👋',
+        category: 'onboarding',
+        points: 50,
+        rarity: 'comum',
+      },
+      {
+        id: 'first_login',
+        name: 'Primeiro Acesso',
+        description: 'Realizou o primeiro login na plataforma',
+        icon: '🚪',
+        category: 'onboarding',
+        points: 25,
+        rarity: 'comum',
+      },
+      {
+        id: 'constitution_download',
+        name: 'Guardião da Constituição',
+        description: 'Baixou a Constituição Federal',
+        icon: '📜',
+        category: 'education',
+        points: 100,
+        rarity: 'raro',
+      },
       {
         id: 'first_checkin',
         name: 'Primeiro Check-in',
@@ -202,6 +295,24 @@ router.get('/achievements', authenticateUser, async (req, res) => {
         category: 'ai',
         points: 100,
         rarity: 'épico',
+      },
+      {
+        id: 'survey_master',
+        name: 'Mestre das Pesquisas',
+        description: 'Responda 5 pesquisas diferentes',
+        icon: '📊',
+        category: 'engagement',
+        points: 75,
+        rarity: 'raro',
+      },
+      {
+        id: 'politician_tracker',
+        name: 'Rastreador Político',
+        description: 'Visualize o perfil de 10 políticos diferentes',
+        icon: '🔍',
+        category: 'politics',
+        points: 60,
+        rarity: 'comum',
       },
     ];
 
@@ -242,6 +353,31 @@ router.put('/plan', authenticateUser, async (req, res) => {
     res.json({ message: 'Plan updated successfully', profile: data });
   } catch (error) {
     console.error('Update plan error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get online users
+router.get('/online', async (req, res) => {
+  try {
+    // Para demonstração, vamos retornar usuários que fizeram login recentemente
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, username, full_name, city, state, latitude, longitude, last_login')
+      .not('latitude', 'is', null)
+      .not('longitude', 'is', null)
+      .gte('last_login', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // últimas 24 horas
+      .order('last_login', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      console.error('Get online users error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json(users || []);
+  } catch (error) {
+    console.error('Get online users error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

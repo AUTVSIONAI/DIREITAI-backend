@@ -3,6 +3,137 @@ const { supabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
+// Check-in to an event with geographic validation
+router.post('/geographic', authenticateUser, async (req, res) => {
+  try {
+    const { event_id, latitude, longitude } = req.body;
+    const userId = req.user.id;
+
+    // Validate required fields
+    if (!event_id || !latitude || !longitude) {
+      return res.status(400).json({ error: 'Event ID, latitude, and longitude are required' });
+    }
+
+    // Get event details
+    const { data: event, error: eventError } = await supabase
+      .from('events')
+      .select('*')
+      .eq('id', event_id)
+      .single();
+
+    if (eventError || !event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    // Check if event is active
+    if (event.status !== 'active') {
+      return res.status(400).json({ error: 'Event is not active' });
+    }
+
+    // Validate geographic proximity (100 meters)
+    if (!event.latitude || !event.longitude) {
+      return res.status(400).json({ error: 'Event location not available' });
+    }
+
+    const distance = calculateDistance(
+      parseFloat(latitude),
+      parseFloat(longitude),
+      parseFloat(event.latitude),
+      parseFloat(event.longitude)
+    );
+
+    const maxDistance = 0.1; // 100 meters in kilometers
+    if (distance > maxDistance) {
+      return res.status(400).json({ 
+        error: 'You must be within 100 meters of the event location to check-in',
+        distance: Math.round(distance * 1000), // distance in meters
+        maxDistance: 100
+      });
+    }
+
+    // Check if user already checked in
+    const { data: existingCheckin } = await supabase
+      .from('checkins')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('event_id', event_id)
+      .single();
+
+    if (existingCheckin) {
+      return res.status(400).json({ error: 'Already checked in to this event' });
+    }
+
+    // Check event capacity
+    const { count: currentCheckins } = await supabase
+      .from('checkins')
+      .select('*', { count: 'exact', head: true })
+      .eq('event_id', event_id);
+
+    if (event.max_participants && currentCheckins >= event.max_participants) {
+      return res.status(400).json({ error: 'Event is at maximum capacity' });
+    }
+
+    // Create check-in record
+    const { data: checkin, error: checkinError } = await supabase
+      .from('checkins')
+      .insert([
+        {
+          user_id: userId,
+          event_id,
+          latitude: parseFloat(latitude),
+          longitude: parseFloat(longitude),
+          checked_in_at: new Date().toISOString(),
+        },
+      ])
+      .select()
+      .single();
+
+    if (checkinError) {
+      return res.status(400).json({ error: checkinError.message });
+    }
+
+    // Award points for check-in
+    const pointsAwarded = 15; // Extra points for geographic check-in
+    await supabase
+      .from('user_points')
+      .insert([
+        {
+          user_id: userId,
+          points: pointsAwarded,
+          source: 'geographic_checkin',
+          description: `Check-in geográfico no evento: ${event.title}`,
+          event_id,
+        },
+      ]);
+
+    // Update user's total points
+    const { data: currentPoints } = await supabase
+      .from('users')
+      .select('points')
+      .eq('id', userId)
+      .single();
+
+    await supabase
+      .from('users')
+      .update({ points: (currentPoints?.points || 0) + pointsAwarded })
+      .eq('id', userId);
+
+    // Check for achievements
+    await checkAchievements(userId);
+
+    res.json({
+      success: true,
+      message: 'Geographic check-in successful',
+      checkin,
+      points_awarded: pointsAwarded,
+      distance: Math.round(distance * 1000) // distance in meters
+    });
+  } catch (error) {
+    console.error('Geographic check-in error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Check-in to an event
 router.post('/', authenticateUser, async (req, res) => {
   try {
@@ -121,6 +252,42 @@ router.post('/', authenticateUser, async (req, res) => {
     });
   } catch (error) {
     console.error('Check-in error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user's check-ins (alias for /my-checkins)
+router.get('/user', authenticateUser, async (req, res) => {
+  try {
+    const { limit = 50, offset = 0 } = req.query;
+    const userId = req.user.id;
+
+    const { data: checkins, error } = await supabase
+      .from('checkins')
+      .select(`
+        *,
+        events (
+          id,
+          title,
+          description,
+          date,
+          time,
+          location,
+          city,
+          state
+        )
+      `)
+      .eq('user_id', userId)
+      .order('checked_in_at', { ascending: false })
+      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({ checkins });
+  } catch (error) {
+    console.error('Get user checkins error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -476,6 +643,45 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
     Math.sin(dLon/2) * Math.sin(dLon/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R * c; // Distância em km
+}
+
+// Get recent checkins
+router.get('/recent', async (req, res) => {
+  try {
+    const { data: checkins, error } = await supabase
+      .from('checkins')
+      .select(`
+        *,
+        users:user_id(id, username, full_name),
+        events:event_id(id, title, city, state)
+      `)
+      .order('checked_in_at', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      console.error('Get recent checkins error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json(checkins || []);
+  } catch (error) {
+    console.error('Get recent checkins error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Helper function to calculate distance between two coordinates using Haversine formula
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const distance = R * c; // Distance in kilometers
+  return distance;
 }
 
 module.exports = router;

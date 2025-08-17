@@ -61,14 +61,15 @@ module.exports = async (req, res) => {
         .from('ai_conversations')
         .select(`
           id,
-          title,
+          conversation_id,
+          message,
+          response,
           created_at,
-          updated_at,
-          message_count,
-          last_message_preview
+          tokens_used,
+          model_used
         `)
         .eq('user_id', targetUserId)
-        .order('updated_at', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (limit) {
         query = query.limit(parseInt(limit));
@@ -81,11 +82,19 @@ module.exports = async (req, res) => {
         return res.status(500).json({ error: 'Failed to fetch conversations' });
       }
 
-      console.log('✅ Conversations retrieved successfully:', conversations?.length || 0);
-      return res.json({ 
-        conversations: conversations || [],
-        total: conversations?.length || 0
-      });
+      // Transformar os dados para o formato esperado pelo frontend
+      const formattedConversations = conversations?.map(conv => ({
+        id: conv.id,
+        conversation_id: conv.conversation_id,
+        title: conv.message?.substring(0, 50) + '...' || 'Conversa sem título',
+        created_at: conv.created_at,
+        updated_at: conv.created_at,
+        message_count: 2, // Sempre 2 (pergunta + resposta)
+        last_message_preview: conv.response?.substring(0, 100) || ''
+      })) || [];
+
+      console.log('✅ Conversations retrieved successfully:', formattedConversations?.length || 0);
+      return res.json(formattedConversations);
     }
 
     if (req.method === 'POST') {
@@ -100,11 +109,13 @@ module.exports = async (req, res) => {
 
       const conversationData = {
         user_id: user.id,
-        title,
+        conversation_id: crypto.randomUUID(),
+        message: first_message || '',
+        response: '',
+        tokens_used: 0,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        message_count: first_message ? 1 : 0,
-        last_message_preview: first_message ? first_message.substring(0, 100) : null
+        model_used: 'gpt-3.5-turbo',
+        provider_used: 'openai'
       };
 
       const { data, error } = await supabase

@@ -23,7 +23,7 @@ const authenticateUser = async (req) => {
   const { data: userData, error: userError } = await supabase
     .from('users')
     .select('*')
-    .eq('id', user.id)
+    .eq('auth_id', user.id)
     .single();
 
   if (userError) {

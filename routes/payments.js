@@ -1,7 +1,6 @@
 const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
-const { getMockPlans } = require('../mock-plans-data');
 const router = express.Router();
 
 // Flag para usar dados mock temporariamente

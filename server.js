@@ -10,7 +10,7 @@ require('dotenv').config();
 // cleanOldLogs();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5120;
 
 // Middleware
 const corsOptions = {
@@ -19,9 +19,9 @@ const corsOptions = {
     'https://www.direitai.com',
     'https://direitai.vercel.app',
     'https://direitai-backend.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:5121'
+    'http://localhost:5120',
+    'http://localhost:5121',
+    'http://localhost:5122'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -30,7 +30,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 // Logger middleware removido para compatibilidade com Vercel
 // app.use(logger.middleware());
@@ -38,6 +38,14 @@ app.use(express.urlencoded({ extended: true }));
 // Debug middleware para todas as requisições
 app.use((req, res, next) => {
   console.log('🔍 REQUEST:', req.method, req.originalUrl);
+  
+  // Debug específico para rotas RSVP
+  if (req.originalUrl.includes('/api/rsvp') && req.method === 'POST') {
+    console.log('🔍 RSVP POST - Headers:', req.headers);
+    console.log('🔍 RSVP POST - Body:', req.body);
+    console.log('🔍 RSVP POST - Content-Type:', req.get('Content-Type'));
+  }
+  
   next();
 });
 
@@ -52,9 +60,23 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin/content-moderation', require('./routes/contentModeration'));
 app.use('/api/admin/financial', require('./routes/financialReports'));
 app.use('/api/admin/store', require('./routes/storeManagement'));
+app.use('/api/admin/politicians', require('./routes/adminPoliticians'));
+app.use('/api/manifestations', require('./routes/manifestations'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/plans', require('./routes/plans'));
 app.use('/api/gamification', require('./routes/gamification'));
+app.use('/api/rsvp', require('./routes/rsvp'));
+
+// Novas rotas para funcionalidades de políticos
+app.use('/api/politicians', require('./routes/politicians'));
+app.use('/api/agents', require('./routes/agents'));
+app.use('/api/blog', require('./routes/blog'));
+app.use('/api/ratings', require('./routes/ratings'));
+app.use('/api/upload', require('./routes/upload'));
+app.use('/api/surveys', require('./routes/surveys'));
+app.use('/api/fake-news', require('./routes/fakeNews'));
+app.use('/api/public', require('./routes/publicRegistration'));
+app.use('/api/constitution', require('./routes/constitution'));
 
 // Root endpoint
 app.get('/', (req, res) => {
