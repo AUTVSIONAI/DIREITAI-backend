@@ -33,8 +33,6 @@
     "test": "echo 'No tests specified'"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.35.0",
-    "@supabase/realtime-js": "^2.8.4",
     "axios": "^1.6.7",
     "bcryptjs": "3.0.2",
     "cors": "^2.8.5",
@@ -47,7 +45,7 @@
     "stripe": "18.4.0",
     "uuid": "^9.0.1",
     "whatwg-url": "^13.0.0",
-    "ws": "^8.14.2"
+
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
