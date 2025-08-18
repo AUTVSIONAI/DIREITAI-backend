@@ -44,16 +44,13 @@
     "multer": "2.0.2",
     "node-fetch": "3.3.2",
     "stripe": "18.4.0",
-    "uuid": "^9.0.1",
-    "whatwg-url": "^13.0.0",
-    "ws": "^8.14.2",
-    "isomorphic-ws": "^5.0.0"
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
   "engines": {
-    "node": "18.x",
+    "node": "22.x",
     "npm": ">=9.0.0"
   },
   "vercel": {
