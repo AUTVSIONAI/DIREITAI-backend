@@ -147,6 +147,29 @@ router.get('/map', async (req, res) => {
   }
 });
 
+// Get active events (must be before /:id route)
+router.get('/active', async (req, res) => {
+  try {
+    const { data: events, error } = await supabase
+      .from('events')
+      .select('*')
+      .eq('status', 'ativo')
+      .gte('start_date', new Date().toISOString())
+      .order('start_date', { ascending: true })
+      .limit(50);
+
+    if (error) {
+      console.error('Get active events error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json(events || []);
+  } catch (error) {
+    console.error('Get active events error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get event by ID
 router.get('/:id', async (req, res) => {
   try {

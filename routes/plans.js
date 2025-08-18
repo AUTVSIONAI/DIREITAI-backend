@@ -1,6 +1,5 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const { getMockPlans, getMockPlanById, getMockPlanBySlug, addMockPlan, updateMockPlan, deleteMockPlan } = require('../mock-plans-data');
 const router = express.Router();
 
 // Configuração do Supabase

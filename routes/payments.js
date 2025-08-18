@@ -1,7 +1,6 @@
 const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
-const { getMockPlans } = require('../mock-plans-data');
 const router = express.Router();
 
 // Flag para usar dados mock temporariamente
@@ -19,28 +18,55 @@ const { authenticateUser } = require('../middleware/auth');
 // Planos disponíveis
 const PLANS = {
   engajado: {
-    name: 'Engajado Nacional',
-    price: 1990, // R$ 19,90 em centavos
+    name: 'Patriota Engajado',
+    price: 2990, // R$ 29,90 em centavos
     currency: 'brl',
     interval: 'month',
     features: [
-      'Acesso a eventos exclusivos',
-      'Notificações prioritárias',
+      '5 análises de fake news por dia',
+      '20 mensagens com IA Criativa por dia',
+      '3 conversas com agentes políticos por dia',
+      'Acesso completo à Constituição',
+      'Histórico completo de análises',
+      'Compartilhamento de resultados',
+      'Sem anúncios',
       'Badge especial no perfil',
-      'Suporte prioritário'
+      'Notificações prioritárias'
     ]
   },
   lider: {
-    name: 'Líder Conservador',
-    price: 4990, // R$ 49,90 em centavos
+    name: 'Patriota Líder',
+    price: 5990, // R$ 59,90 em centavos
     currency: 'brl',
     interval: 'month',
     features: [
-      'Todos os benefícios do Engajado',
+      '10 análises de fake news por dia',
+      '50 mensagens com IA Criativa por dia',
+      'Conversas ilimitadas com agentes políticos',
+      'Acesso completo à Constituição',
+      'Análises com IA premium (modelos mais avançados)',
+      'Relatórios semanais personalizados',
+      'Acesso antecipado a novos recursos',
+      'Suporte prioritário',
+      'API para desenvolvedores (100 calls/dia)'
+    ]
+  },
+  supremo: {
+    name: 'Patriota Supremo',
+    price: 8990, // R$ 89,90 em centavos
+    currency: 'brl',
+    interval: 'month',
+    features: [
+      '20 análises de fake news por dia',
+      'IA Criativa ilimitada',
+      'Todos os agentes políticos ilimitados',
+      'Acesso completo à Constituição',
+      'IA premium com modelos exclusivos',
+      'Consultoria política personalizada (1h/mês)',
       'Criação de eventos próprios',
-      'Acesso a relatórios avançados',
-      'Mentoria exclusiva',
-      'Rede de contatos VIP'
+      'Rede de contatos VIP',
+      'API premium (1000 calls/dia)',
+      'White-label para organizações'
     ]
   }
 };

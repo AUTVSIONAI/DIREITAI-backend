@@ -1,8 +1,15 @@
 const express = require('express');
-const { supabase } = require('../lib/supabase');
+const { supabase } = require('../config/supabase');
 const aiService = require('../services/aiService');
 const { authenticateUser } = require('../middleware/auth');
+const { randomUUID } = require('crypto');
 const router = express.Router();
+
+// Debug middleware para todas as rotas AI
+router.use((req, res, next) => {
+  console.log('🤖 AI Routes - Requisição recebida:', req.method, req.path);
+  next();
+});
 
 // DireitaGPT Chat com APIs reais
 router.post('/chat', authenticateUser, async (req, res) => {
@@ -43,7 +50,7 @@ router.post('/chat', authenticateUser, async (req, res) => {
     }
 
     // Generate conversation ID if not provided
-    const finalConversationId = conversation_id || `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const finalConversationId = conversation_id || randomUUID();
 
     // Save conversation to database
     const saveResult = await aiService.saveConversation(
@@ -101,21 +108,77 @@ router.get('/usage', authenticateUser, async (req, res) => {
   }
 });
 
+// Get Creative AI usage statistics
+router.get('/creative-ai/usage', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userPlan = req.user.plan || 'gratuito';
+    const today = new Date().toISOString().split('T')[0];
+
+    // Today's generation usage
+    const { count: todayGenerations } = await supabase
+      .from('ai_generations')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', today + 'T00:00:00.000Z')
+      .lt('created_at', today + 'T23:59:59.999Z');
+
+    // Total generation usage
+    const { count: totalGenerations } = await supabase
+      .from('ai_generations')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    const generationLimits = {
+      gratuito: 0,
+      engajado: 20,
+      premium: -1,
+    };
+
+    const limit = generationLimits[userPlan] || generationLimits.gratuito;
+    const used = todayGenerations || 0;
+    const remaining = limit === -1 ? -1 : Math.max(0, limit - used);
+
+    res.json({
+      plan: userPlan,
+      today: {
+        generations: used,
+      },
+      total: {
+        generations: totalGenerations || 0,
+      },
+      limits: {
+        generations: limit,
+      },
+      remaining: remaining,
+      canUse: limit === -1 || used < limit
+    });
+  } catch (error) {
+    console.error('Creative AI usage error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get user conversation history
 router.get('/conversations', authenticateUser, async (req, res) => {
   try {
+    console.log('🤖 AI Conversations - Iniciando busca de conversas');
     const userId = req.user.id;
     const { limit = 50 } = req.query;
+    console.log('🤖 AI Conversations - User ID:', userId, 'Limit:', limit);
 
     const result = await aiService.getUserConversations(userId, parseInt(limit));
+    console.log('🤖 AI Conversations - Resultado do aiService:', result);
 
     if (!result.success) {
+      console.error('🤖 AI Conversations - Erro no aiService:', result.error);
       return res.status(500).json({ 
         error: 'Failed to fetch conversations',
         details: result.error
       });
     }
 
+    console.log('🤖 AI Conversations - Enviando resposta:', result.data?.length || 0, 'conversas');
     res.json({
       conversations: result.data,
       total: result.data.length
@@ -213,35 +276,7 @@ router.post('/generate', authenticateUser, async (req, res) => {
   }
 });
 
-// Get conversation history
-router.get('/conversations', authenticateUser, async (req, res) => {
-  try {
-    const { limit = 50, offset = 0, conversation_id } = req.query;
-    const userId = req.user.id;
-
-    let query = supabase
-      .from('ai_conversations')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
-
-    if (conversation_id) {
-      query = query.eq('conversation_id', conversation_id);
-    }
-
-    const { data: conversations, error } = await query;
-
-    if (error) {
-      return res.status(400).json({ error: error.message });
-    }
-
-    res.json({ conversations });
-  } catch (error) {
-    console.error('Get conversations error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Rota duplicada removida - usando a implementação anterior com aiService
 
 // Get generation history
 router.get('/generations', authenticateUser, async (req, res) => {
@@ -385,7 +420,7 @@ router.get('/conversations/:conversationId/messages', authenticateUser, async (r
 
 // Helper functions
 function generateConversationId() {
-  return 'conv_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  return randomUUID();
 }
 
 function generateDireitaGPTResponse(message) {

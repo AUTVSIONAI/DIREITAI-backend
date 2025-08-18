@@ -33,20 +33,87 @@ const authenticateUser = async (req) => {
   return userData;
 };
 
-// Simulação de resposta da IA (substitua por integração real)
+// Integração real com OpenRouter API
 const generateAIResponse = async (message, context = null) => {
-  // Aqui você integraria com OpenAI, Claude, ou outro serviço de IA
-  // Por enquanto, retornamos uma resposta simulada
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
   
-  const responses = [
-    "Como conservador, acredito que é importante defender nossos valores tradicionais.",
-    "A família é a base da sociedade e devemos protegê-la.",
-    "O livre mercado é fundamental para o crescimento econômico.",
-    "Precisamos valorizar nossa história e tradições brasileiras.",
-    "A segurança pública deve ser prioridade em qualquer governo."
-  ];
-  
-  return responses[Math.floor(Math.random() * responses.length)];
+  if (!openRouterKey) {
+    console.warn('OPENROUTER_API_KEY não configurada, usando resposta de fallback');
+    return 'Desculpe, estou com dificuldades técnicas no momento. Tente novamente em alguns instantes.';
+  }
+
+  try {
+    const systemPrompt = `Você é o DireitaGPT, um assistente de IA com perspectiva conservadora brasileira. 
+Suas características:
+- Defende valores tradicionais, família e livre mercado
+- Tem conhecimento sobre política brasileira
+- É respeitoso e educado
+- Foca em soluções práticas e realistas
+- Valoriza a história e tradições do Brasil
+
+Responda de forma clara, objetiva e sempre mantendo uma perspectiva conservadora equilibrada.`;
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openRouterKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://direitai.com',
+        'X-Title': 'DireitaGPT - Assistente IA Conservador'
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-3.5-sonnet',
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: message
+          }
+        ],
+        max_tokens: 500,
+        temperature: 0.7
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('Erro na OpenRouter API:', errorData);
+      
+      // Usar sistema de dispatcher inteligente para múltiplas LLMs
+      console.log('🚀 Iniciando sistema de dispatcher inteligente para fallback...');
+      try {
+        const { smartDispatcher } = require('../../services/aiService');
+        const result = await smartDispatcher(message, systemPrompt);
+        
+        return result.content;
+      } catch (dispatcherError) {
+        console.error('Erro no dispatcher inteligente:', dispatcherError.message);
+        return 'Desculpe, estou temporariamente indisponível. Nossa equipe está trabalhando para resolver isso. Tente novamente em alguns minutos.';
+      }
+      
+      throw new Error('Erro na API de IA');
+    }
+
+    const data = await response.json();
+    return data.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.';
+    
+  } catch (error) {
+    console.error('Erro ao gerar resposta da IA:', error);
+    
+    // Fallback para respostas conservadoras básicas
+    const fallbackResponses = [
+      "Como conservador, acredito que é importante defender nossos valores tradicionais e a família brasileira.",
+      "A economia brasileira precisa de mais liberdade econômica e menos intervenção estatal para prosperar.",
+      "A segurança pública deve ser prioridade, com apoio às forças policiais e justiça eficiente.",
+      "Precisamos valorizar nossa história, tradições e a soberania nacional do Brasil.",
+      "A educação deve focar em conhecimento sólido e valores cívicos para formar cidadãos responsáveis."
+    ];
+    
+    return fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
+  }
 };
 
 module.exports = async (req, res) => {
@@ -100,9 +167,9 @@ module.exports = async (req, res) => {
       // Salvar resposta da IA
       const aiMessageData = {
         conversation_id: conversation_id || null,
-        user_id: user.id,
-        message: aiResponse,
-        sender: 'ai',
+        role: 'assistant',
+        content: aiResponse,
+        tokens: 0,
         created_at: new Date().toISOString()
       };
 
@@ -116,14 +183,14 @@ module.exports = async (req, res) => {
         console.error('❌ Error saving AI message:', aiMessageError);
       }
 
-      // Atualizar contador de conversas se conversation_id existir
+      // Atualizar conversa se conversation_id existir
       if (conversation_id) {
         await supabase
           .from('ai_conversations')
           .update({ 
-            updated_at: new Date().toISOString(),
-            message_count: supabase.raw('message_count + 2'),
-            last_message_preview: aiResponse.substring(0, 100)
+            response: aiResponse,
+            tokens_used: 0,
+            created_at: new Date().toISOString()
           })
           .eq('id', conversation_id);
       }

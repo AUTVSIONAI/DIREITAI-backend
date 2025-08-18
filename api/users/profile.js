@@ -23,7 +23,7 @@ const authenticateUser = async (req) => {
   const { data: userData, error: userError } = await supabase
     .from('users')
     .select('*')
-    .eq('id', user.id)
+    .eq('auth_id', user.id)
     .single();
 
   if (userError) {
@@ -35,7 +35,11 @@ const authenticateUser = async (req) => {
 
 module.exports = async (req, res) => {
   // Configurar CORS
-  res.setHeader('Access-Control-Allow-Origin', 'https://direitai.com');
+  const allowedOrigins = ['https://direitai.com', 'http://localhost:5121'];
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -62,10 +66,13 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'PUT') {
-      console.log('📝 Profile update request');
+      console.log('🔍 REQUEST: PUT /api/users/profile');
       
       const user = await authenticateUser(req);
-      const { username, full_name, bio, city, state, phone, birth_date } = req.body;
+      console.log('📝 Profile update request for user:', user.id);
+      console.log('📝 Request body:', req.body);
+      
+      const { username, full_name, bio, city, state, phone, birth_date, avatar_url } = req.body;
 
       // Validate required fields
       if (!username || !full_name) {
@@ -76,13 +83,21 @@ module.exports = async (req, res) => {
       const updateData = {
         username,
         full_name,
-        bio,
-        city,
-        state,
-        phone,
-        birth_date,
+        bio: bio || null,
+        city: city || null,
+        state: state || null,
+        phone: phone || null,
+        birth_date: birth_date && birth_date.trim() !== '' ? birth_date : null,
         updated_at: new Date().toISOString(),
       };
+
+      // Add avatar_url if provided
+      if (avatar_url) {
+        updateData.avatar_url = avatar_url;
+      }
+      
+      console.log('📝 Update data:', updateData);
+      console.log('🔍 User ID from req.user:', user.id);
 
       const { data, error } = await supabase
         .from('users')
@@ -92,8 +107,12 @@ module.exports = async (req, res) => {
         .single();
 
       if (error) {
-        console.error('❌ Profile update error:', error);
-        return res.status(500).json({ error: 'Failed to update profile' });
+        console.error('❌ Supabase update error:', error);
+        // Return more specific error for debugging
+        if (error.code === '22007') {
+          return res.status(400).json({ error: 'Invalid date format. Please check your birth date.' });
+        }
+        return res.status(500).json({ error: 'Failed to update profile', details: error.message });
       }
 
       console.log('✅ Profile updated successfully');

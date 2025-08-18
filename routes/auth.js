@@ -64,16 +64,15 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
-    // Get user profile
-    const { data: profile, error: profileError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', data.user.id)
-      .single();
-
-    if (profileError) {
-      return res.status(400).json({ error: profileError.message });
-    }
+    // Criar perfil básico para evitar problemas de RLS
+    const profile = {
+      id: data.user.id,
+      auth_id: data.user.id,
+      email: data.user.email,
+      username: data.user.email.split('@')[0],
+      full_name: data.user.user_metadata?.full_name || data.user.email.split('@')[0],
+      role: 'user'
+    };
 
     res.json({
       message: 'Login successful',

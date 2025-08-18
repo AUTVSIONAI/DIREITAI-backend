@@ -10,7 +10,7 @@ require('dotenv').config();
 // cleanOldLogs();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5120;
 
 // Middleware
 const corsOptions = {
@@ -19,9 +19,9 @@ const corsOptions = {
     'https://www.direitai.com',
     'https://direitai.vercel.app',
     'https://direitai-backend.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:5121'
+    'http://localhost:5120',
+    'http://localhost:5121',
+    'http://localhost:5122'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -30,7 +30,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 // Logger middleware removido para compatibilidade com Vercel
 // app.use(logger.middleware());
@@ -38,12 +38,54 @@ app.use(express.urlencoded({ extended: true }));
 // Debug middleware para todas as requisições
 app.use((req, res, next) => {
   console.log('🔍 REQUEST:', req.method, req.originalUrl);
+  
+  // Debug específico para rotas RSVP
+  if (req.originalUrl.includes('/api/rsvp') && req.method === 'POST') {
+    console.log('🔍 RSVP POST - Headers:', req.headers);
+    console.log('🔍 RSVP POST - Body:', req.body);
+    console.log('🔍 RSVP POST - Content-Type:', req.get('Content-Type'));
+  }
+  
   next();
+});
+
+// Rota de teste para transações (sem autenticação)
+app.get('/api/test-transactions/:userId', async (req, res) => {
+  try {
+    const { supabase } = require('./config/supabase');
+    const { userId } = req.params;
+    console.log('💰 Test Transactions - Buscando transações para usuário:', userId);
+
+    const { data: transactions, error } = await supabase
+      .from('points')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('💰 Test Transactions - Erro:', error);
+      return res.status(500).json({ error: 'Erro ao buscar transações' });
+    }
+
+    console.log('💰 Test Transactions - Transações encontradas:', transactions?.length || 0);
+
+    res.json({
+      success: true,
+      user_id: userId,
+      transactions: transactions || [],
+      total: transactions?.length || 0
+    });
+  } catch (error) {
+    console.error('💰 Test Transactions - Erro:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
 });
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/user', require('./routes/user'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/checkins', require('./routes/checkins'));
 app.use('/api/ai', require('./routes/ai'));
@@ -52,9 +94,25 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin/content-moderation', require('./routes/contentModeration'));
 app.use('/api/admin/financial', require('./routes/financialReports'));
 app.use('/api/admin/store', require('./routes/storeManagement'));
+app.use('/api/admin/politicians', require('./routes/adminPoliticians'));
+app.use('/api/manifestations', require('./routes/manifestations'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/plans', require('./routes/plans'));
 app.use('/api/gamification', require('./routes/gamification'));
+app.use('/api/rsvp', require('./routes/rsvp'));
+app.use('/api/credits', require('./routes/credits'));
+
+// Novas rotas para funcionalidades de políticos
+app.use('/api/politicians', require('./routes/politicians'));
+app.use('/api/agents', require('./routes/agents'));
+app.use('/api/blog', require('./routes/blog'));
+app.use('/api/ratings', require('./routes/ratings'));
+app.use('/api/upload', require('./routes/upload'));
+app.use('/api/surveys', require('./routes/surveys'));
+app.use('/api/fake-news', require('./routes/fakeNews'));
+app.use('/api/public', require('./routes/publicRegistration'));
+app.use('/api/constitution', require('./routes/constitution'));
+app.use('/api/constitution-downloads', require('./routes/constitutionDownloads'));
 
 // Root endpoint
 app.get('/', (req, res) => {
