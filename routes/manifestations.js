@@ -1,5 +1,5 @@
 const express = require('express');
-const { createClient } = require('@supabase/supabase-js');
+const { supabase } = require('../config/supabase');
 const router = express.Router();
 
 // Configuração do Supabase

@@ -1,11 +1,36 @@
 const { supabase } = require('../config/supabase');
 
 // Cliente admin para operações que precisam contornar RLS
-const { createClient } = require('@supabase/supabase-js');
-const adminSupabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const axios = require('axios');
+const adminSupabase = {
+  from: (table) => ({
+    select: (columns = '*') => ({
+      eq: (column, value) => ({
+        single: async () => {
+          try {
+            const response = await axios.get(
+              `${process.env.SUPABASE_URL}/rest/v1/${table}?select=${columns}&${column}=eq.${value}`,
+              {
+                headers: {
+                  'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY,
+                  'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            const data = response.data;
+            if (data && data.length > 0) {
+              return { data: data[0], error: null };
+            }
+            return { data: null, error: { message: 'No data found' } };
+          } catch (error) {
+            return { data: null, error: { message: error.message } };
+          }
+        }
+      })
+    })
+  })
+};
 
 // Função helper para resolver userId (aceita tanto auth_id quanto ID da tabela users)
 const resolveUserId = async (inputUserId) => {
