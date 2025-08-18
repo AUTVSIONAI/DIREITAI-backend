@@ -44,7 +44,7 @@
     "nodemon": "^3.0.1"
   },
   "overrides": {
-    "whatwg-url": "7.1.0"
+    "whatwg-url": "11.0.0"
   },
   "browserslist": {
     "production": [
