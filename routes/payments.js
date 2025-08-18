@@ -77,17 +77,20 @@ const PLANS = {
  */
 router.post('/checkout', authenticateUser, async (req, res) => {
   try {
-    const { planType } = req.body;
+    const { planType, planId } = req.body;
     const userId = req.user.id;
     
-    if (!planType || !PLANS[planType]) {
+    // Aceitar tanto planType quanto planId para compatibilidade
+    const selectedPlan = planType || planId;
+    
+    if (!selectedPlan || !PLANS[selectedPlan]) {
       return res.status(400).json({
         success: false,
         message: 'Tipo de plano inválido'
       });
     }
     
-    const plan = PLANS[planType];
+    const plan = PLANS[selectedPlan];
     
     // Criar sessão de checkout
     const session = await stripe.checkout.sessions.create({
@@ -113,7 +116,7 @@ router.post('/checkout', authenticateUser, async (req, res) => {
       cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5121'}/plans`,
       metadata: {
         userId: userId,
-        planType: planType
+        planType: selectedPlan
       },
       customer_email: req.user.email,
     });
