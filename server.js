@@ -149,6 +149,18 @@ app.get('/health', (req, res) => {
   res.json(healthData);
 });
 
+// Endpoint de debug para verificar variáveis de ambiente
+app.get('/debug/env', (req, res) => {
+  res.status(200).json({
+    NODE_ENV: process.env.NODE_ENV,
+    SUPABASE_URL: process.env.SUPABASE_URL ? 'Configurada' : 'Não configurada',
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Configurada' : 'Não configurada',
+    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ? 'Configurada' : 'Não configurada',
+    PORT: process.env.PORT,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Erro no servidor:', err.message, {
