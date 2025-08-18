@@ -1,40 +1,24 @@
 const { supabase } = require('../config/supabase');
 
 // Cliente admin para operações que precisam contornar RLS
-const axios = require('axios');
-const adminSupabase = {
-  from: (table) => ({
-    select: (columns = '*') => ({
-      eq: (column, value) => ({
-        single: async () => {
-          try {
-            const response = await axios.get(
-              `${process.env.SUPABASE_URL}/rest/v1/${table}?select=${columns}&${column}=eq.${value}`,
-              {
-                headers: {
-                  'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY,
-                  'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
-            const data = response.data;
-            if (data && data.length > 0) {
-              return { data: data[0], error: null };
-            }
-            return { data: null, error: { message: 'No data found' } };
-          } catch (error) {
-            return { data: null, error: { message: error.message } };
-          }
-        }
-      })
-    })
-  })
-};
+const { createClient } = require('@supabase/supabase-js');
+const adminSupabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 // Função helper para resolver userId (aceita tanto auth_id quanto ID da tabela users)
-const resolveUserId = async (inputUserId) => {
+const resolveUserId = async (inputUserId, requestUser = null) => {
   try {
+    console.log('🔍 resolveUserId - inputUserId:', inputUserId);
+    console.log('🔍 resolveUserId - requestUser:', requestUser ? { id: requestUser.id, auth_id: requestUser.auth_id } : 'null');
+    
+    // Se o inputUserId é igual ao ID ou auth_id do usuário da requisição, usar diretamente
+    if (requestUser && (inputUserId === requestUser.id || inputUserId === requestUser.auth_id)) {
+      console.log('🔍 resolveUserId - usando requestUser.id:', requestUser.id);
+      return requestUser.id; // Para user_goals, precisamos do ID da tabela users
+    }
+    
     // Primeiro, tentar buscar por ID da tabela users
     let { data: dbUser, error: dbError } = await adminSupabase
       .from('users')
@@ -44,7 +28,8 @@ const resolveUserId = async (inputUserId) => {
     
     if (!dbError && dbUser) {
       console.log('🔍 User ID from database:', dbUser.id);
-      return dbUser.id; // Retorna o ID da tabela users
+      console.log('🔍 Auth ID from database:', dbUser.auth_id);
+      return dbUser.id; // Para user_goals, retornar ID da tabela users
     }
     
     // Se não encontrou, tentar buscar por auth_id
@@ -56,7 +41,8 @@ const resolveUserId = async (inputUserId) => {
     
     if (!dbError && dbUser) {
       console.log('🔍 User ID from database (via auth_id):', dbUser.id);
-      return dbUser.id; // Retorna o ID da tabela users
+      console.log('🔍 Auth ID from database (via auth_id):', dbUser.auth_id);
+      return dbUser.id; // Para user_goals, retornar ID da tabela users
     }
     
     console.log('❌ Usuário não encontrado:', inputUserId);
