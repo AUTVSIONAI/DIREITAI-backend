@@ -1,12 +1,22 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
 const { authenticateUser, authenticateAdmin } = require('../middleware/auth');
 const router = express.Router();
+
+// Usar supabase global
+const getSupabase = () => global.supabase || {
+  from: () => ({
+    select: () => Promise.resolve({ data: [], error: null }),
+    insert: () => Promise.resolve({ data: null, error: { message: 'Supabase não disponível' } }),
+    update: () => Promise.resolve({ data: null, error: { message: 'Supabase não disponível' } }),
+    delete: () => Promise.resolve({ data: null, error: { message: 'Supabase não disponível' } })
+  })
+};
 
 // Dashboard overview statistics
 router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     // Get user statistics
+    const supabase = getSupabase();
     const { data: userStats } = await supabase
       .from('users')
       .select('plan, created_at')

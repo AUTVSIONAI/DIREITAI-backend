@@ -16,7 +16,19 @@ try {
   console.log('✅ Supabase configurado com sucesso');
 } catch (error) {
   console.error('❌ Erro ao configurar Supabase:', error.message);
+  // Criar um mock do supabase para evitar crashes
+  supabase = {
+    from: () => ({
+      select: () => Promise.resolve({ data: [], error: null }),
+      insert: () => Promise.resolve({ data: null, error: { message: 'Supabase não configurado' } }),
+      update: () => Promise.resolve({ data: null, error: { message: 'Supabase não configurado' } }),
+      delete: () => Promise.resolve({ data: null, error: { message: 'Supabase não configurado' } })
+    })
+  };
 }
+
+// Tornar supabase disponível globalmente
+global.supabase = supabase;
 
 // Logger removido para compatibilidade com Vercel
 // const logger = require('./utils/logger');
