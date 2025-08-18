@@ -1,10 +1,26 @@
 const express = require('express');
 const cors = require('cors');
-const { supabase } = require('./config/supabase');
+require('dotenv').config();
+
+// Verificar se as variáveis de ambiente estão configuradas
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('❌ Variáveis de ambiente do Supabase não configuradas');
+  console.error('SUPABASE_URL:', process.env.SUPABASE_URL ? 'Configurada' : 'Não configurada');
+  console.error('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Configurada' : 'Não configurada');
+}
+
+let supabase;
+try {
+  const supabaseConfig = require('./config/supabase');
+  supabase = supabaseConfig.supabase;
+  console.log('✅ Supabase configurado com sucesso');
+} catch (error) {
+  console.error('❌ Erro ao configurar Supabase:', error.message);
+}
+
 // Logger removido para compatibilidade com Vercel
 // const logger = require('./utils/logger');
 // const { cleanOldLogs } = require('./utils/logCleaner');
-require('dotenv').config();
 
 // Logs antigos removidos para compatibilidade com Vercel
 // cleanOldLogs();
