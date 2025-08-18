@@ -37,12 +37,14 @@
     "form-data": "4.0.4",
     "jsonwebtoken": "9.0.2",
     "multer": "2.0.2",
-    "node-fetch": "^2.7.0",
     "stripe": "18.4.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "overrides": {
+    "whatwg-url": "7.1.0"
   },
   "browserslist": {
     "production": [
