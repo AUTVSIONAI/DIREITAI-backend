@@ -35,6 +35,15 @@ app.use(express.urlencoded({ extended: true }));
 // Logger middleware removido para compatibilidade com Vercel
 // app.use(logger.middleware());
 
+// Middleware para lidar com preflight OPTIONS requests
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.status(200).send();
+});
+
 // Debug middleware para todas as requisições
 app.use((req, res, next) => {
   console.log('🔍 REQUEST:', req.method, req.originalUrl);
