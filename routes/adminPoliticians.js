@@ -14,15 +14,44 @@ const requireAdmin = (req, res, next) => {
 // Listar políticos pendentes de aprovação
 router.get('/pending', authenticateUser, requireAdmin, async (req, res) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10, search, party, state, position } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const { data: politicians, error, count } = await supabase
+    let query = supabase
       .from('politicians')
       .select('*', { count: 'exact' })
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
+
+    // Filtro por busca (nome)
+    if (search && search.trim()) {
+      query = query.or(`name.ilike.%${search.trim()}%,full_name.ilike.%${search.trim()}%`);
+    }
+
+    // Filtro por partido
+    if (party && party.trim()) {
+      query = query.eq('party', party.trim());
+    }
+
+    // Filtro por estado
+    if (state && state.trim()) {
+      query = query.eq('state', state.trim().toUpperCase());
+    }
+
+    // Filtro por posição/cargo
+    if (position && position.trim()) {
+      const pos = position.trim().toLowerCase();
+      if (pos === 'senador') {
+        query = query.eq('position', 'senador');
+      } else if (pos === 'deputado') {
+        query = query.or('position.eq.deputado,position.eq.deputado federal');
+      } else {
+        query = query.ilike('position', `%${position.trim()}%`);
+      }
+    }
+
+    const { data: politicians, error, count } = await query;
 
     if (error) {
       console.error('Erro ao buscar políticos pendentes:', error);
