@@ -151,13 +151,16 @@ app.get('/health', (req, res) => {
 
 // Endpoint de debug para verificar variáveis de ambiente
 app.get('/debug/env', (req, res) => {
-  res.status(200).json({
-    NODE_ENV: process.env.NODE_ENV,
-    SUPABASE_URL: process.env.SUPABASE_URL ? 'Configurada' : 'Não configurada',
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Configurada' : 'Não configurada',
-    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ? 'Configurada' : 'Não configurada',
-    PORT: process.env.PORT,
-    timestamp: new Date().toISOString()
+  res.json({
+    NODE_ENV: process.env.NODE_ENV || 'Não configurada',
+    SUPABASE_URL: process.env.SUPABASE_URL || 'Não configurada',
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? `${process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 20)}...` : 'Não configurada',
+    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ? `${process.env.SUPABASE_ANON_KEY.substring(0, 20)}...` : 'Não configurada',
+    PORT: process.env.PORT || 'Não configurada',
+    timestamp: new Date().toISOString(),
+    // Verificar se as URLs são válidas
+    supabase_url_is_placeholder: process.env.SUPABASE_URL === 'https://your-project.supabase.co',
+    supabase_key_is_placeholder: process.env.SUPABASE_SERVICE_ROLE_KEY === 'your-service-role-key'
   });
 });
 
