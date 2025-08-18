@@ -80,12 +80,25 @@ const authenticateUser = async (req, res, next) => {
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     console.log('🔍 Verificando token:', token.substring(0, 20) + '...');
     
-    // Verificar o token com Supabase
-    const { data: { user }, error } = await adminSupabase.auth.getUser(token);
-    
-    if (error || !user) {
-      console.error('❌ Auth error:', error?.message || 'Usuário não encontrado');
+    // Verificar o token com Supabase usando a API REST
+    let user;
+    try {
+      const response = await axios.get(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+        headers: {
+          'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      user = response.data;
+    } catch (authError) {
+      console.error('❌ Auth error:', authError.response?.data?.message || authError.message);
       console.log('🔍 Token completo:', token);
+      return res.status(401).json({ error: 'Token inválido ou expirado' });
+    }
+    
+    if (!user || !user.id) {
+      console.error('❌ Usuário não encontrado no token');
       return res.status(401).json({ error: 'Token inválido ou expirado' });
     }
 

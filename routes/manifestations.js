@@ -45,47 +45,73 @@ const authenticateAdmin = async (req, res, next) => {
 
 /**
  * GET /api/manifestations
- * Listar manifestações ativas para usuários
+ * Lista todas as manifestações com filtros opcionais
  */
 router.get('/', async (req, res) => {
   try {
-    const { city, state, lat, lng, radius = 10000 } = req.query; // radius em metros
+    console.log('🔍 Iniciando busca de manifestações...');
+    const { city, state, status, limit = 50, page = 1 } = req.query;
     
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    console.log('🔍 Parâmetros:', { city, state, status, limit, page, offset });
+    
+    // Primeiro, vamos testar uma consulta simples
+    console.log('🔍 Testando consulta simples...');
+    const { data: testData, error: testError } = await supabase
+      .from('manifestations')
+      .select('id, name')
+      .limit(1);
+    
+    if (testError) {
+      console.error('❌ Erro na consulta de teste:', testError);
+      return res.status(500).json({ 
+        error: 'Erro na consulta de teste', 
+        details: testError.message 
+      });
+    }
+    
+    console.log('✅ Consulta de teste bem-sucedida:', testData);
+
     let query = supabase
       .from('manifestations')
       .select('*')
-      .eq('is_active', true)
-      .eq('status', 'active')
-      .gte('end_date', new Date().toISOString())
-      .order('start_date', { ascending: true });
+      .order('start_date', { ascending: false })
+      .range(offset, offset + parseInt(limit) - 1);
 
-    // Filtros opcionais
+    // Aplicar filtros condicionalmente
     if (city) {
-      query = query.ilike('city', `%${city}%`);
+      query = query.eq('city', city);
     }
-    
     if (state) {
-      query = query.ilike('state', `%${state}%`);
+      query = query.eq('state', state.toUpperCase());
+    }
+    if (status) {
+      query = query.eq('status', status);
     }
 
+    console.log('🔍 Executando consulta principal...');
     const { data: manifestations, error } = await query;
 
     if (error) {
-      console.error('Erro ao buscar manifestações:', error);
-      return res.status(500).json({ error: 'Erro ao buscar manifestações' });
+      console.error('❌ Erro ao buscar manifestações:', error);
+      return res.status(500).json({ 
+        error: 'Erro ao buscar manifestações', 
+        details: error.message 
+      });
     }
 
-    // Se lat/lng fornecidos, calcular distância e filtrar por proximidade
+    console.log('✅ Consulta bem-sucedida. Manifestações encontradas:', manifestations?.length || 0);
+
+    // Aplicar filtros adicionais se necessário
     let filteredManifestations = manifestations;
-    if (lat && lng) {
+
+    if (req.query.search) {
       filteredManifestations = manifestations.filter(manifestation => {
-        const distance = calculateDistance(
-          parseFloat(lat), parseFloat(lng),
-          parseFloat(manifestation.latitude), parseFloat(manifestation.longitude)
-        );
-        manifestation.distance = Math.round(distance);
-        return distance <= parseFloat(radius);
-      }).sort((a, b) => a.distance - b.distance);
+        const searchTerm = req.query.search.toLowerCase();
+        return manifestation.name.toLowerCase().includes(searchTerm) ||
+               manifestation.description?.toLowerCase().includes(searchTerm) ||
+               manifestation.city?.toLowerCase().includes(searchTerm);
+      });
     }
 
     res.json({
