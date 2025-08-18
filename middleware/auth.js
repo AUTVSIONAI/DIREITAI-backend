@@ -7,6 +7,41 @@ const adminSupabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// Função helper para resolver userId (aceita tanto auth_id quanto ID da tabela users)
+const resolveUserId = async (inputUserId) => {
+  try {
+    // Primeiro, tentar buscar por ID da tabela users
+    let { data: dbUser, error: dbError } = await adminSupabase
+      .from('users')
+      .select('*')
+      .eq('id', inputUserId)
+      .single();
+    
+    if (!dbError && dbUser) {
+      console.log('🔍 User ID from database:', dbUser.id);
+      return dbUser.id; // Retorna o ID da tabela users
+    }
+    
+    // Se não encontrou, tentar buscar por auth_id
+    ({ data: dbUser, error: dbError } = await adminSupabase
+      .from('users')
+      .select('*')
+      .eq('auth_id', inputUserId)
+      .single());
+    
+    if (!dbError && dbUser) {
+      console.log('🔍 User ID from database (via auth_id):', dbUser.id);
+      return dbUser.id; // Retorna o ID da tabela users
+    }
+    
+    console.log('❌ Usuário não encontrado:', inputUserId);
+    return null;
+  } catch (error) {
+    console.error('❌ Erro ao resolver userId:', error);
+    return null;
+  }
+};
+
 // Middleware para autenticar usuário
 const authenticateUser = async (req, res, next) => {
   try {
@@ -165,5 +200,6 @@ const optionalAuthenticateUser = async (req, res, next) => {
 module.exports = {
   authenticateUser,
   authenticateAdmin,
-  optionalAuthenticateUser
+  optionalAuthenticateUser,
+  resolveUserId
 };
