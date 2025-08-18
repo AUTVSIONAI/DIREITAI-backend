@@ -2,12 +2,6 @@ const express = require('express');
 const { supabase } = require('../config/supabase');
 const router = express.Router();
 
-// Configuração do Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 // Middleware para autenticação
 const authenticateUser = async (req, res, next) => {
   try {

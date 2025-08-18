@@ -6,12 +6,6 @@ const router = express.Router();
 // Flag para usar dados mock temporariamente
 const USE_MOCK_DATA = false;
 
-// Configuração do Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 // Importar middleware de autenticação
 const { authenticateUser } = require('../middleware/auth');
 

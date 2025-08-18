@@ -4,11 +4,6 @@ const { authenticateUser } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Configuração do Supabase
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
 // Verificar se usuário já baixou a Constituição
 router.get('/download-status/:userId', authenticateUser, async (req, res) => {
   try {
