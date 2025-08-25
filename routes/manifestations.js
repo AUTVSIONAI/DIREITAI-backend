@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const router = express.Router();
 
 // Middleware para autenticação
@@ -49,36 +49,18 @@ const authenticateAdmin = async (req, res, next) => {
  */
 router.get('/', async (req, res) => {
   try {
-    console.log('🔍 Iniciando busca de manifestações...');
     const { city, state, status, limit = 50, page = 1 } = req.query;
     
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    console.log('🔍 Parâmetros:', { city, state, status, limit, page, offset });
-    
-    // Primeiro, vamos testar uma consulta simples
-    console.log('🔍 Testando consulta simples...');
-    const { data: testData, error: testError } = await supabase
-      .from('manifestations')
-      .select('id, name')
-      .limit(1);
-    
-    if (testError) {
-      console.error('❌ Erro na consulta de teste:', testError);
-      return res.status(500).json({ 
-        error: 'Erro na consulta de teste', 
-        details: testError.message 
-      });
-    }
-    
-    console.log('✅ Consulta de teste bem-sucedida:', testData);
 
     let query = supabase
       .from('manifestations')
       .select('*')
+      .eq('is_active', true)
       .order('start_date', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
 
-    // Aplicar filtros condicionalmente
+    // Aplicar filtros
     if (city) {
       query = query.eq('city', city);
     }
@@ -89,18 +71,7 @@ router.get('/', async (req, res) => {
       query = query.eq('status', status);
     }
 
-    console.log('🔍 Executando consulta principal...');
     const { data: manifestations, error } = await query;
-
-    if (error) {
-      console.error('❌ Erro ao buscar manifestações:', error);
-      return res.status(500).json({ 
-        error: 'Erro ao buscar manifestações', 
-        details: error.message 
-      });
-    }
-
-    console.log('✅ Consulta bem-sucedida. Manifestações encontradas:', manifestations?.length || 0);
 
     // Aplicar filtros adicionais se necessário
     let filteredManifestations = manifestations;
@@ -588,7 +559,7 @@ router.get('/checkins/export', authenticateUser, authenticateAdmin, async (req, 
     const manifestationIds = [...new Set(checkins.map(c => c.manifestation_id))];
     
     const [usersResult, manifestationsResult] = await Promise.all([
-      supabase.from('users').select('id, username, email, full_name').in('id', userIds),
+      adminSupabase.from('users').select('id, username, email, full_name').in('id', userIds),
       supabase.from('manifestations').select('id, name, city, state').in('id', manifestationIds)
     ]);
     
@@ -752,7 +723,7 @@ router.get('/checkins/map', async (req, res) => {
     const manifestationIds = [...new Set(checkins.map(c => c.manifestation_id))];
     
     const [usersResult, manifestationsResult] = await Promise.all([
-      supabase.from('users').select('id, username, full_name').in('id', userIds),
+      adminSupabase.from('users').select('id, username, full_name').in('id', userIds),
       supabase.from('manifestations').select('id, name, city, state').in('id', manifestationIds)
     ]);
     

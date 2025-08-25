@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
@@ -12,12 +12,12 @@ router.get('/users/:userId/status', async (req, res) => {
     const { userId } = req.params;
     
     // Verificar se o usuário pode acessar estes dados
-    if (req.user.id !== userId && !req.user.is_admin) {
+    if (req.user.id !== userId && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
     // Verificar se já existe um download registrado para este usuário
-    const { data: download, error } = await supabase
+    const { data: download, error } = await adminSupabase
       .from('constitution_downloads')
       .select('*')
       .eq('user_id', userId)
@@ -50,7 +50,7 @@ router.post('/users/:userId/register', async (req, res) => {
     }
 
     // Verificar se já existe um download registrado para este usuário
-    const { data: existingDownload } = await supabase
+    const { data: existingDownload } = await adminSupabase
       .from('constitution_downloads')
       .select('id')
       .eq('user_id', userId)
@@ -64,7 +64,7 @@ router.post('/users/:userId/register', async (req, res) => {
     }
 
     // Registrar o download
-    const { data: download, error: downloadError } = await supabase
+    const { data: download, error: downloadError } = await adminSupabase
       .from('constitution_downloads')
       .insert({
         user_id: userId,
@@ -79,7 +79,7 @@ router.post('/users/:userId/register', async (req, res) => {
     }
 
     // Adicionar pontos ao usuário
-    const { error: pointsError } = await supabase
+    const { error: pointsError } = await adminSupabase
       .from('points')
       .insert({
         user_id: userId,
@@ -115,11 +115,11 @@ router.get('/stats', async (req, res) => {
     }
 
     // Buscar estatísticas
-    const { count: totalDownloads } = await supabase
+    const { count: totalDownloads } = await adminSupabase
       .from('constitution_downloads')
       .select('*', { count: 'exact', head: true });
 
-    const { data: recentDownloads } = await supabase
+    const { data: recentDownloads } = await adminSupabase
       .from('constitution_downloads')
       .select('downloaded_at')
       .gte('downloaded_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())

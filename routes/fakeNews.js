@@ -1,7 +1,7 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
-const { analyzeFakeNews, checkUserLimits } = require('../services/aiService');
+const { analyzeFakeNews } = require('../services/aiService');
 const { randomUUID } = require('crypto');
 const router = express.Router();
 
@@ -138,12 +138,41 @@ router.post('/analyze', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'Conteúdo é obrigatório' });
     }
 
-    // Verificar limites do usuário
-    const limitsCheck = await checkUserLimits(userId);
-    if (!limitsCheck.canUse) {
+    // Verificar limites do usuário para fake news
+    const userPlan = req.user.plan || 'gratuito';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Contar análises de fake news de hoje
+    const { count: todayAnalyses } = await supabase
+      .from('fake_news_checks')
+      .select('*', { count: 'exact', head: true })
+      .eq('usuario_id', userId)
+      .gte('created_at', today.toISOString())
+      .lt('created_at', tomorrow.toISOString());
+
+    // Definir limites por plano
+    const limits = {
+      gratuito: 1,
+      cidadao: 5,
+      premium: 15,
+      pro: 20,
+      elite: 30
+    };
+
+    const dailyLimit = limits[userPlan] || limits.gratuito;
+    const usedToday = todayAnalyses || 0;
+
+    // Verificar se excedeu o limite (exceto para plano supremo)
+    if (dailyLimit !== -1 && usedToday >= dailyLimit) {
       return res.status(429).json({ 
-        error: 'Limite de uso excedido',
-        details: limitsCheck
+        error: 'Limite diário de análises excedido',
+        plan: userPlan,
+        limit: dailyLimit,
+        used: usedToday,
+        remaining: 0
       });
     }
 
@@ -171,25 +200,32 @@ router.post('/analyze', authenticateUser, async (req, res) => {
       });
     }
 
-    // Salvar no banco de dados
-    const { data: savedCheck, error: saveError } = await supabase
+    // Preparar dados para inserção
+    const insertData = {
+      usuario_id: userId,
+      tipo_input: type,
+      conteudo: content.substring(0, 1000), // Limitar tamanho
+      resultado: analysisResult.resultado,
+      explicacao: analysisResult.explicacao,
+      confianca: analysisResult.confianca,
+      fontes: analysisResult.fontes || []
+    };
+    
+    console.log('📝 Dados para inserção:', JSON.stringify(insertData, null, 2));
+    
+    // Salvar no banco de dados usando adminSupabase para contornar RLS
+    const { data: savedCheck, error: saveError } = await adminSupabase
       .from('fake_news_checks')
-      .insert({
-        usuario_id: userId,
-        tipo_input: type,
-        conteudo: content.substring(0, 1000), // Limitar tamanho
-        resultado: analysisResult.resultado,
-        explicacao: analysisResult.explicacao,
-        confianca: analysisResult.confianca,
-        fontes: analysisResult.fontes || []
-      })
+      .insert(insertData)
       .select()
       .single();
 
     if (saveError) {
-      console.error('Erro ao salvar verificação:', saveError);
+      console.error('❌ Erro detalhado ao salvar verificação:', JSON.stringify(saveError, null, 2));
       return res.status(500).json({ error: 'Erro ao salvar verificação' });
     }
+    
+    console.log('✅ Verificação salva com sucesso:', savedCheck.id);
 
     res.json({
       id: savedCheck.id,
@@ -213,7 +249,7 @@ router.get('/history', authenticateUser, async (req, res) => {
     const offset = (page - 1) * limit
     const userId = req.user.id
 
-    let query = supabase
+    let query = adminSupabase
       .from('fake_news_checks')
       .select('*', { count: 'exact' })
       .eq('usuario_id', userId)
@@ -253,7 +289,8 @@ router.get('/trending', async (req, res) => {
   try {
     const { limit = 10 } = req.query;
 
-    const { data: checks, error } = await supabase
+    // Usar adminSupabase para acesso público aos dados (contorna RLS)
+    const { data: checks, error } = await adminSupabase
       .from('fake_news_checks')
       .select('*')
       .order('feedback_positivo', { ascending: false })
@@ -348,13 +385,13 @@ router.post('/:id/feedback', authenticateUser, async (req, res) => {
 // Rota para buscar estatísticas gerais
 router.get('/stats', async (req, res) => {
   try {
-    // Total de verificações
-    const { count: totalChecks } = await supabase
+    // Total de verificações - usar adminSupabase para acesso público
+    const { count: totalChecks } = await adminSupabase
       .from('fake_news_checks')
       .select('*', { count: 'exact', head: true });
 
-    // Verificações por resultado
-    const { data: resultStats } = await supabase
+    // Verificações por resultado - usar adminSupabase para acesso público
+    const { data: resultStats } = await adminSupabase
       .from('fake_news_checks')
       .select('resultado')
       .then(({ data }) => {
@@ -365,11 +402,11 @@ router.get('/stats', async (req, res) => {
         return { data: stats };
       });
 
-    // Verificações desta semana
+    // Verificações desta semana - usar adminSupabase para acesso público
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     
-    const { count: weeklyChecks } = await supabase
+    const { count: weeklyChecks } = await adminSupabase
       .from('fake_news_checks')
       .select('*', { count: 'exact', head: true })
       .gte('created_at', weekAgo.toISOString());

@@ -119,11 +119,14 @@ router.get('/posts/:identifier', async (req, res) => {
       // Simular o resultado do single()
       const { data: post, error } = { data: matchingPost, error: null };
       
+      console.log('📝 Post encontrado por slug:', post?.title);
+      console.log('🖼️ Cover image URL:', post?.cover_image_url);
+      
       if (post) {
         // Buscar posts relacionados
         const { data: relatedPosts } = await supabase
           .from('politician_posts')
-          .select('id, title, summary, featured_image, published_at')
+          .select('id, title, summary, cover_image_url, published_at')
           .eq('is_published', true)
           .neq('id', post.id)
           .limit(4)
@@ -153,7 +156,7 @@ router.get('/posts/:identifier', async (req, res) => {
     // Buscar posts relacionados
     const { data: relatedPosts } = await supabase
       .from('politician_posts')
-      .select('id, title, summary, featured_image, published_at')
+      .select('id, title, summary, cover_image_url, published_at')
       .eq('is_published', true)
       .neq('id', post.id)
       .limit(4)
@@ -255,6 +258,9 @@ router.get('/:identifier', async (req, res) => {
     if (!post) {
       return res.status(404).json({ error: 'Post não encontrado' });
     }
+    
+    console.log('📝 Post encontrado por UUID:', post?.title);
+    console.log('🖼️ Cover image URL:', post?.cover_image_url);
 
     // Adicionar slug ao post
     const postWithSlug = {
@@ -506,8 +512,16 @@ router.post('/:postId/like', authenticateUser, async (req, res) => {
         .eq('post_id', postId)
         .eq('user_id', userId);
 
-      // Decrementar contador
-      await supabase.rpc('decrement_likes_count', { post_id: postId });
+      // Decrementar contador manualmente
+      const { count } = await supabase
+        .from('blog_post_likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('post_id', postId);
+      
+      await supabase
+        .from('politician_posts')
+        .update({ likes_count: count || 0 })
+        .eq('id', postId);
       
       res.json({ liked: false, message: 'Post descurtido' });
     } else {
@@ -516,8 +530,16 @@ router.post('/:postId/like', authenticateUser, async (req, res) => {
         .from('blog_post_likes')
         .insert({ post_id: postId, user_id: userId });
 
-      // Incrementar contador
-      await supabase.rpc('increment_likes_count', { post_id: postId });
+      // Incrementar contador manualmente
+      const { count } = await supabase
+        .from('blog_post_likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('post_id', postId);
+      
+      await supabase
+        .from('politician_posts')
+        .update({ likes_count: count })
+        .eq('id', postId);
       
       res.json({ liked: true, message: 'Post curtido' });
     }
@@ -653,25 +675,31 @@ router.get('/:postId/comments', async (req, res) => {
       return res.status(404).json({ error: 'Post não encontrado' });
     }
 
-    // Buscar comentários com informações do usuário
+    // Buscar comentários
     const { data: comments, error } = await supabase
       .from('blog_comments')
-      .select(`
-        id,
-        content,
-        created_at,
-        updated_at,
-        likes_count,
-        users!inner(
-          id,
-          name,
-          email
-        )
-      `)
+      .select('id, content, created_at, updated_at, likes_count, user_id')
       .eq('post_id', postId)
       .eq('is_approved', true)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
+
+    // Buscar informações dos usuários para cada comentário
+    const commentsWithUsers = [];
+    if (comments && comments.length > 0) {
+      for (const comment of comments) {
+        const { data: user } = await supabase
+          .from('users')
+          .select('id, name, email')
+          .eq('id', comment.user_id)
+          .single();
+        
+        commentsWithUsers.push({
+          ...comment,
+          users: user || { id: comment.user_id, name: 'Usuário', email: '' }
+        });
+      }
+    }
 
     if (error) {
       throw error;
@@ -685,7 +713,7 @@ router.get('/:postId/comments', async (req, res) => {
       .eq('is_approved', true);
 
     res.json({
-      comments: comments || [],
+      comments: commentsWithUsers || [],
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),

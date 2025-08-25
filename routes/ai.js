@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const aiService = require('../services/aiService');
 const { authenticateUser } = require('../middleware/auth');
 const { randomUUID } = require('crypto');
@@ -16,6 +16,7 @@ router.post('/chat', authenticateUser, async (req, res) => {
     }
 
     // User data is already available from middleware
+    // Usar id (UUID) da tabela users para ai_conversations
     const userId = req.user.id;
     const userProfile = req.user;
 
@@ -83,24 +84,7 @@ router.post('/chat', authenticateUser, async (req, res) => {
 });
 
 // Get user usage statistics
-router.get('/usage', authenticateUser, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const userPlan = req.user.plan || 'Gratuito';
-
-    const limits = await aiService.checkUserLimits(userId, userPlan);
-
-    res.json({
-      dailyUsage: limits.used,
-      planLimit: limits.limit,
-      remaining: limits.remaining,
-      plan: userPlan
-    });
-  } catch (error) {
-    console.error('Usage error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Rota removida - usando implementação mais completa abaixo
 
 // Get Creative AI usage statistics
 router.get('/creative-ai/usage', authenticateUser, async (req, res) => {
@@ -110,7 +94,7 @@ router.get('/creative-ai/usage', authenticateUser, async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
 
     // Today's generation usage
-    const { count: todayGenerations } = await supabase
+    const { count: todayGenerations } = await adminSupabase
       .from('ai_generations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
@@ -118,15 +102,17 @@ router.get('/creative-ai/usage', authenticateUser, async (req, res) => {
       .lt('created_at', today + 'T23:59:59.999Z');
 
     // Total generation usage
-    const { count: totalGenerations } = await supabase
+    const { count: totalGenerations } = await adminSupabase
       .from('ai_generations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId);
 
     const generationLimits = {
-      gratuito: 0,
-      engajado: 20,
-      premium: -1,
+      gratuito: 5,
+      cidadao: 20,
+      premium: 50,
+      pro: 100,
+      elite: 100
     };
 
     const limit = generationLimits[userPlan] || generationLimits.gratuito;
@@ -179,6 +165,118 @@ router.get('/conversations', authenticateUser, async (req, res) => {
 });
 
 // Creative AI Content Generation
+router.post('/creative-ai/generate', authenticateUser, async (req, res) => {
+  try {
+    const { prompt, template, tone, length } = req.body;
+    const userId = req.user.id;
+
+    if (!prompt || !template) {
+      return res.status(400).json({ error: 'Prompt and template are required' });
+    }
+
+    // Get user profile to check plan access
+    const { data: userProfile } = await supabase
+      .from('users')
+      .select('plan')
+      .eq('id', userId)
+      .single();
+
+    // Check usage limits
+    const today = new Date().toISOString().split('T')[0];
+    const { count: todayUsage } = await adminSupabase
+      .from('ai_generations')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', today + 'T00:00:00.000Z')
+      .lt('created_at', today + 'T23:59:59.999Z');
+
+    const limits = {
+      gratuito: 5,
+      cidadao: 20,
+      premium: 50,
+      pro: 100,
+      elite: 100
+    };
+
+    const userLimit = limits[userProfile?.plan] || 5;
+    if (userLimit !== -1 && todayUsage >= userLimit) {
+      return res.status(429).json({ 
+        error: 'Daily generation limit reached',
+        message: 'Limite diário de gerações atingido',
+        limit: userLimit,
+        usage: todayUsage
+      });
+    }
+
+    // Generate content using real LLM
+    const aiResult = await aiService.generateCreativeContent(template, prompt, tone, length);
+    
+    if (!aiResult.success) {
+      return res.status(500).json({ 
+        error: 'Failed to generate creative content',
+        message: 'Falha ao gerar conteúdo criativo',
+        details: aiResult.error
+      });
+    }
+    
+    const generatedContent = aiResult.content;
+
+    // Save generation
+    // Map frontend types to database enum values
+    function mapTypeToEnum(frontendType) {
+      const typeMapping = {
+        'social_post': 'social_post',
+        'meme': 'social_post', // Memes são tratados como posts sociais
+        'video_script': 'speech', // Scripts são tratados como discursos
+        'speech': 'speech',
+        'article': 'social_post', // Artigos são tratados como posts sociais
+        'video': 'social_post' // Vídeos são tratados como posts sociais
+      };
+      return typeMapping[frontendType] || 'social_post';
+    }
+
+    const dbType = mapTypeToEnum(template);
+
+    const { data: generation, error: generationError } = await adminSupabase
+      .from('ai_generations')
+      .insert([
+        {
+          user_id: userId,
+          type: dbType,
+          prompt,
+          tone,
+          length,
+          generated_content: generatedContent,
+          created_at: new Date().toISOString(),
+        },
+      ])
+      .select()
+      .single();
+
+    if (generationError) {
+      console.error('Error saving generation:', generationError);
+    }
+
+    res.json({
+      content: generatedContent,
+      template,
+      generation_id: generation?.id,
+      model: aiResult.model,
+      provider: aiResult.provider,
+      tokens_used: aiResult.tokensUsed,
+      usage: {
+        today: todayUsage + 1,
+        limit: userLimit,
+        remaining: userLimit - (todayUsage + 1)
+      },
+    });
+  } catch (error) {
+    console.error('Creative AI generation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Legacy route for backward compatibility
 router.post('/generate', authenticateUser, async (req, res) => {
   try {
     const { type, prompt, tone, length, template } = req.body;
@@ -195,16 +293,9 @@ router.post('/generate', authenticateUser, async (req, res) => {
       .eq('id', userId)
       .single();
 
-    // Check if user has access to Creative AI
-    if (userProfile?.plan === 'gratuito') {
-      return res.status(403).json({ 
-        error: 'Creative AI requires Engajado or Premium plan'
-      });
-    }
-
     // Check usage limits
     const today = new Date().toISOString().split('T')[0];
-    const { count: todayUsage } = await supabase
+    const { count: todayUsage } = await adminSupabase
       .from('ai_generations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
@@ -212,8 +303,11 @@ router.post('/generate', authenticateUser, async (req, res) => {
       .lt('created_at', today + 'T23:59:59.999Z');
 
     const limits = {
-      engajado: 20,
-      premium: -1, // unlimited
+      gratuito: 5,
+      cidadao: 20,
+      premium: 50,
+      pro: 100,
+      elite: 100
     };
 
     const userLimit = limits[userProfile?.plan] || 0;
@@ -228,17 +322,31 @@ router.post('/generate', authenticateUser, async (req, res) => {
     // Generate content based on type
     const generatedContent = generateCreativeContent(type, prompt, tone, length, template);
 
+    // Map frontend types to database enum values
+    function mapTypeToEnum(frontendType) {
+      const typeMapping = {
+        'social_post': 'social_post',
+        'meme': 'social_post', // Memes são tratados como posts sociais
+        'video_script': 'speech', // Scripts são tratados como discursos
+        'speech': 'speech',
+        'article': 'social_post', // Artigos são tratados como posts sociais
+        'video': 'social_post' // Vídeos são tratados como posts sociais
+      };
+      return typeMapping[frontendType] || 'social_post';
+    }
+
+    const dbType = mapTypeToEnum(type);
+
     // Save generation
-    const { data: generation, error: generationError } = await supabase
+    const { data: generation, error: generationError } = await adminSupabase
       .from('ai_generations')
       .insert([
         {
           user_id: userId,
-          type,
+          type: dbType,
           prompt,
           tone,
           length,
-          template,
           generated_content: generatedContent,
           created_at: new Date().toISOString(),
         },
@@ -273,7 +381,7 @@ router.get('/generations', authenticateUser, async (req, res) => {
     const { limit = 50, offset = 0, type } = req.query;
     const userId = req.user.id;
 
-    let query = supabase
+    let query = adminSupabase
       .from('ai_generations')
       .select('*')
       .eq('user_id', userId)
@@ -312,7 +420,7 @@ router.get('/usage', authenticateUser, async (req, res) => {
       .lt('created_at', today + 'T23:59:59.999Z');
 
     // Today's generation usage
-    const { count: todayGenerations } = await supabase
+    const { count: todayGenerations } = await adminSupabase
       .from('ai_generations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
@@ -320,12 +428,12 @@ router.get('/usage', authenticateUser, async (req, res) => {
       .lt('created_at', today + 'T23:59:59.999Z');
 
     // Total usage
-    const { count: totalChats } = await supabase
+    const { count: totalChats } = await adminSupabase
       .from('ai_conversations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId);
 
-    const { count: totalGenerations } = await supabase
+    const { count: totalGenerations } = await adminSupabase
       .from('ai_generations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId);
@@ -339,14 +447,18 @@ router.get('/usage', authenticateUser, async (req, res) => {
 
     const chatLimits = {
       gratuito: 10,
-      engajado: 50,
-      premium: -1,
+      cidadao: 20,
+      premium: 50,
+      pro: 100,
+      elite: 100
     };
 
     const generationLimits = {
-      gratuito: 0,
-      engajado: 20,
-      premium: -1,
+      gratuito: 5,
+      cidadao: 20,
+      premium: 50,
+      pro: 100,
+      elite: 100
     };
 
     res.json({
@@ -376,29 +488,35 @@ router.get('/conversations/:conversationId/messages', authenticateUser, async (r
     const { page = 1, limit = 50 } = req.query;
     const userId = req.user.id;
 
-    // Verificar se a conversa pertence ao usuário
-    const { data: conversation } = await supabase
-      .from('ai_conversations')
-      .select('user_id')
-      .eq('conversation_id', conversationId)
-      .single();
-
-    if (!conversation || conversation.user_id !== userId) {
-      return res.status(404).json({ error: 'Conversa não encontrada' });
-    }
-
-    // Buscar mensagens da conversa
+    // Buscar conversas do usuário com o conversation_id específico
     const offset = (page - 1) * limit;
-    const { data: messages, error } = await supabase
-      .from('ai_messages')
+    const { data: conversations, error } = await adminSupabase
+      .from('ai_conversations')
       .select('*')
       .eq('conversation_id', conversationId)
+      .eq('user_id', userId)
       .order('created_at', { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (error) {
       return res.status(400).json({ error: error.message });
     }
+
+    if (!conversations || conversations.length === 0) {
+      return res.status(404).json({ error: 'Conversa não encontrada' });
+    }
+
+    // Converter conversas para formato de mensagens
+    const messages = conversations.map(conv => ({
+      id: conv.id,
+      conversation_id: conv.conversation_id,
+      message: conv.message,
+      response: conv.response,
+      created_at: conv.created_at,
+      model_used: conv.model_used,
+      provider_used: conv.provider_used,
+      tokens_used: conv.tokens_used
+    }));
 
     res.json({ messages: messages || [] });
   } catch (error) {
@@ -440,8 +558,100 @@ function generateDireitaGPTResponse(message) {
   return 'Obrigado por sua pergunta! Como DireitaGPT, estou aqui para discutir temas importantes para o Brasil com base em princípios conservadores de liberdade, responsabilidade e valores tradicionais. Como posso ajudá-lo a entender melhor esses conceitos?';
 }
 
+// Helper functions for content generation
+function generateSocialPost(prompt, tone, length, selectedTone, selectedLength) {
+  let content = '';
+  let hashtags = '#Brasil #ValoresConservadores #Patriotismo';
+  
+  if (tone === 'profissional') {
+    content = `📋 ${prompt}\n\nÉ fundamental que mantenhamos nossos princípios e valores como base para um Brasil próspero e justo. A responsabilidade de cada cidadão é essencial para o progresso da nação.`;
+  } else if (tone === 'inspirador') {
+    content = `🇧🇷 ${prompt}\n\nNossos valores conservadores nos guiam para um Brasil melhor! Juntos, com fé e determinação, construiremos o futuro que nossos filhos merecem. 💪`;
+    hashtags += ' #FéEDeterminação #FuturoMelhor';
+  } else if (tone === 'educativo') {
+    content = `📚 ${prompt}\n\nVamos entender a importância dos valores tradicionais na construção de uma sociedade sólida. A família, o trabalho e a fé são pilares fundamentais para o desenvolvimento nacional.`;
+    hashtags += ' #Educação #ValoresTracionais';
+  } else if (tone === 'combativo') {
+    content = `⚔️ ${prompt}\n\nÉ hora de defender nossos valores! Não podemos permitir que ideologias destrutivas minem os fundamentos da nossa sociedade. Brasil acima de tudo!`;
+    hashtags += ' #DefendaBrasil #BrasilAcimaDeTudo';
+  } else if (tone === 'familiar') {
+    content = `👨‍👩‍👧‍👦 ${prompt}\n\nA família é o coração da nossa sociedade. É em casa que aprendemos os valores que nos tornam cidadãos de bem. Vamos fortalecer nossos laços familiares!`;
+    hashtags += ' #FamíliaForte #ValoresFamiliares';
+  }
+  
+  return `${content}\n\n${hashtags}`;
+}
+
+function generateMemeContent(prompt, tone, length, selectedTone, selectedLength) {
+  let concept = '';
+  
+  if (tone === 'profissional') {
+    concept = `[CONCEITO DE MEME]\n\nTítulo: "${prompt}"\n\nImagem sugerida: Gráfico ou infográfico relacionado ao tema\n\nTexto: "Quando você entende que ${prompt.toLowerCase()} é fundamental para o progresso do país"\n\nEstilo: Informativo e respeitoso`;
+  } else if (tone === 'inspirador') {
+    concept = `[CONCEITO DE MEME]\n\nTítulo: "${prompt}"\n\nImagem sugerida: Bandeira do Brasil tremulando\n\nTexto superior: "QUANDO VOCÊ ACREDITA"\nTexto inferior: "EM ${prompt.toUpperCase()}"\n\nEstilo: Motivacional e patriótico`;
+  } else {
+    concept = `[CONCEITO DE MEME]\n\nTítulo: "${prompt}"\n\nImagem sugerida: Pessoa sorrindo ou gesto de aprovação\n\nTexto: "${prompt} é o caminho para um Brasil melhor"\n\nEstilo: ${selectedTone}`;
+  }
+  
+  return concept;
+}
+
+function generateVideoScript(prompt, tone, length, selectedTone, selectedLength) {
+  let duration = '';
+  let intro = '';
+  let development = '';
+  let conclusion = '';
+  
+  if (length === 'curto') {
+    duration = '30-60 segundos';
+    intro = `"Olá! Vamos falar rapidamente sobre ${prompt}."\n[0-10s]`;
+    development = `"${prompt} é essencial para nosso país porque..."\n[10-45s]\n- Ponto principal\n- Exemplo prático`;
+    conclusion = `"Juntos, construímos um Brasil melhor!"\n[45-60s]`;
+  } else if (length === 'medio') {
+    duration = '2-3 minutos';
+    intro = `"Olá, patriotas! Hoje vamos conversar sobre ${prompt}."\n[0-20s]`;
+    development = `"Vamos entender por que ${prompt} é fundamental..."\n[20s-2m20s]\n- Contextualização\n- Valores conservadores relacionados\n- Exemplos práticos\n- Impacto na sociedade`;
+    conclusion = `"Lembrem-se: cada um de nós faz a diferença!"\n[2m20s-3m]`;
+  } else {
+    duration = '5-8 minutos';
+    intro = `"Caros brasileiros, hoje abordaremos um tema crucial: ${prompt}."\n[0-30s]`;
+    development = `"Análise completa sobre ${prompt}..."\n[30s-7m]\n- Introdução ao tema\n- Contexto histórico\n- Valores conservadores\n- Exemplos nacionais e internacionais\n- Impacto social e econômico\n- Propostas de ação`;
+    conclusion = `"Unidos pelos nossos valores, construiremos o Brasil dos nossos sonhos!"\n[7m-8m]`;
+  }
+  
+  return `🎬 ROTEIRO DE VÍDEO\n\nTema: ${prompt}\nDuração: ${duration}\nTom: ${selectedTone}\n\n📝 ESTRUTURA:\n\nINTRODUÇÃO:\n${intro}\n\nDESENVOLVIMENTO:\n${development}\n\nCONCLUSÃO:\n${conclusion}\n\n💡 DICAS DE PRODUÇÃO:\n- Use imagens relacionadas ao tema\n- Mantenha o tom ${selectedTone}\n- Inclua call-to-action no final`;
+}
+
+function generateSpeech(prompt, tone, length, selectedTone, selectedLength) {
+  let opening = '';
+  let body = '';
+  let closing = '';
+  
+  if (tone === 'profissional') {
+    opening = `"Senhoras e senhores,\n\nÉ com grande satisfação que me dirijo a vocês para abordar um tema de extrema relevância: ${prompt}."\n\n`;
+    body = `"${prompt} representa um dos pilares fundamentais da nossa sociedade. É através da compreensão e aplicação destes princípios que poderemos construir um Brasil mais justo, próspero e desenvolvido.\n\nNossa responsabilidade como cidadãos é clara: devemos trabalhar incansavelmente para promover estes valores em nossas comunidades, famílias e instituições."\n\n`;
+    closing = `"Convido todos a refletirem sobre a importância de ${prompt} e a assumirem o compromisso de serem agentes de transformação positiva em nossa sociedade.\n\nMuito obrigado."`;
+  } else if (tone === 'inspirador') {
+    opening = `"Meus caros patriotas,\n\nEstamos aqui reunidos por um propósito maior: ${prompt}!"\n\n`;
+    body = `"${prompt} não é apenas um conceito, é a chama que arde em nossos corações! É a força que nos move a lutar por um Brasil melhor, mais forte e mais próspero.\n\nCada um de nós tem o poder de fazer a diferença. Quando nos unimos em torno de nossos valores, somos invencíveis!"\n\n`;
+    closing = `"Vamos em frente, com fé, coragem e determinação! Juntos, faremos do Brasil a grande nação que sempre sonhamos!\n\nViva o Brasil! Viva ${prompt}!"`;
+  } else {
+    opening = `"Caros brasileiros,\n\nReunimo-nos hoje para falar sobre ${prompt}."\n\n`;
+    body = `"${prompt} é fundamental para o desenvolvimento da nossa nação. Nossos valores tradicionais - família, trabalho, fé e pátria - nos guiam nesta jornada.\n\nÉ nosso dever como cidadãos promover estes princípios e trabalhar para um futuro melhor."\n\n`;
+    closing = `"Juntos, com união e determinação, construiremos o Brasil que nossos filhos merecem!\n\nObrigado."`;
+  }
+  
+  return `🎤 DISCURSO: ${prompt}\n\nTom: ${selectedTone}\nExtensão: ${selectedLength}\n\n📝 CONTEÚDO:\n\n${opening}${body}${closing}\n\n💡 ORIENTAÇÕES:\n- Mantenha contato visual com a audiência\n- Use gestos apropriados ao tom ${selectedTone}\n- Faça pausas estratégicas para ênfase`;
+}
+
 function generateCreativeContent(type, prompt, tone, length, template) {
   const toneAdjectives = {
+    profissional: 'respeitoso e profissional',
+    inspirador: 'motivador e inspirador',
+    educativo: 'didático e informativo',
+    combativo: 'firme e determinado',
+    familiar: 'caloroso e próximo',
+    // Backward compatibility
     formal: 'respeitoso e profissional',
     casual: 'descontraído e acessível',
     inspirational: 'motivador e inspirador',
@@ -449,27 +659,31 @@ function generateCreativeContent(type, prompt, tone, length, template) {
   };
 
   const lengthWords = {
+    curto: '1-2 parágrafos (50-100 palavras)',
+    medio: '3-4 parágrafos (150-300 palavras)',
+    longo: '5+ parágrafos (400-600 palavras)',
+    // Backward compatibility
     short: '50-100 palavras',
     medium: '150-300 palavras',
     long: '400-600 palavras'
   };
 
+  // Generate content based on tone and length
+  const selectedTone = toneAdjectives[tone] || 'neutro';
+  const selectedLength = lengthWords[length] || 'médio';
+  
   switch (type) {
-    case 'social_post':
-      return `🇧🇷 ${prompt}\n\nNossos valores conservadores nos guiam para um Brasil melhor! 💪\n\n#Brasil #ValoresConservadores #Patriotismo #DireitaBrasil`;
-    
-    case 'meme':
-      return `[MEME CONCEPT]\n\nTítulo: "${prompt}"\n\nImagem sugerida: Foto do Brasil com bandeira tremulando\n\nTexto superior: "QUANDO VOCÊ DEFENDE"\nTexto inferior: "OS VALORES TRADICIONAIS BRASILEIROS"\n\nTom: ${toneAdjectives[tone] || 'inspirador'}`;
-    
-    case 'video_script':
-      return `ROTEIRO DE VÍDEO\n\nTema: ${prompt}\n\nDuração estimada: ${length === 'short' ? '30-60 segundos' : length === 'medium' ? '2-3 minutos' : '5-8 minutos'}\n\nINTRODUÇÃO:\n"Olá, patriotas! Hoje vamos falar sobre ${prompt}..."\n\nDESENVOLVIMENTO:\n- Contextualização do tema\n- Apresentação dos valores conservadores relacionados\n- Exemplos práticos\n\nCONCLUSÃO:\n"Juntos, podemos construir um Brasil melhor baseado em nossos valores tradicionais!"\n\nTom: ${toneAdjectives[tone] || 'inspirador'}`;
-    
-    case 'speech':
-      return `DISCURSO: ${prompt}\n\n"Caros brasileiros,\n\nEstamos aqui reunidos porque acreditamos em um Brasil forte, próspero e baseado em valores sólidos. ${prompt} representa tudo aquilo que defendemos: família, trabalho, fé e pátria.\n\nNosso país tem um potencial imenso, mas precisamos de liderança que respeite nossas tradições e promova a liberdade responsável. Cada um de nós tem o dever de contribuir para essa transformação.\n\nJuntos, com determinação e fé, construiremos o Brasil que nossos filhos merecem!\n\nViva o Brasil!"\n\nTom: ${toneAdjectives[tone] || 'inspirador'}\nExtensão: ${lengthWords[length] || 'média'}`;
-    
-    default:
-      return `Conteúdo gerado para: ${prompt}\n\nTipo: ${type}\nTom: ${toneAdjectives[tone] || 'neutro'}\nTamanho: ${lengthWords[length] || 'médio'}\n\nEste conteúdo foi criado com base nos valores conservadores brasileiros, promovendo família, trabalho, fé e pátria.`;
-  }
+     case 'social_post':
+       return generateSocialPost(prompt, selectedTone, selectedLength, selectedTone, selectedLength);
+     case 'meme':
+       return generateMemeContent(prompt, selectedTone, selectedLength, selectedTone, selectedLength);
+     case 'video_script':
+       return generateVideoScript(prompt, selectedTone, selectedLength, selectedTone, selectedLength);
+     case 'speech':
+       return generateSpeech(prompt, selectedTone, selectedLength, selectedTone, selectedLength);
+     default:
+       return `Conteúdo ${selectedTone} sobre ${prompt} (${selectedLength})`;
+   }
 }
 
 module.exports = router;

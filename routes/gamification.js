@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser, resolveUserId } = require('../middleware/auth');
 const router = express.Router();
 
@@ -9,7 +9,7 @@ router.get('/transactions-test/:userId', async (req, res) => {
     const { userId } = req.params;
     console.log('💰 Transactions Test - Buscando transações para usuário:', userId);
 
-    const { data: transactions, error } = await supabase
+    const { data: transactions, error } = await adminSupabase
       .from('points')
       .select('*')
       .eq('user_id', userId)
@@ -177,7 +177,7 @@ router.get('/users/:userId/stats', async (req, res) => {
     }
 
     // Buscar pontos do usuário
-    const { data: pointsData } = await supabase
+    const { data: pointsData } = await adminSupabase
       .from('points')
       .select('amount')
       .eq('user_id', resolvedUserId);
@@ -185,19 +185,19 @@ router.get('/users/:userId/stats', async (req, res) => {
     const totalPoints = pointsData?.reduce((sum, point) => sum + point.amount, 0) || 0;
 
     // Buscar badges do usuário
-    const { count: badgesCount } = await supabase
+    const { count: badgesCount } = await adminSupabase
       .from('badges')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', resolvedUserId);
 
     // Buscar check-ins do usuário
-    const { count: checkinsCount } = await supabase
+    const { count: checkinsCount } = await adminSupabase
       .from('checkins')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', resolvedUserId);
 
     // Buscar conversas de IA do usuário
-    const { count: conversationsCount } = await supabase
+    const { count: conversationsCount } = await adminSupabase
       .from('ai_conversations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', resolvedUserId);
@@ -236,7 +236,7 @@ router.get('/users/:userId/activities', async (req, res) => {
     const activities = [];
 
     // Buscar transações de pontos recentes (atividades mais importantes)
-    const { data: pointTransactions } = await supabase
+    const { data: pointTransactions } = await adminSupabase
       .from('points')
       .select('*')
       .eq('user_id', resolvedUserId)
@@ -273,7 +273,7 @@ router.get('/users/:userId/activities', async (req, res) => {
     });
 
     // Buscar check-ins recentes (caso não tenham gerado pontos ainda)
-    const { data: checkins } = await supabase
+    const { data: checkins } = await adminSupabase
       .from('checkins')
       .select('*, events(title)')
       .eq('user_id', resolvedUserId)
@@ -301,7 +301,7 @@ router.get('/users/:userId/activities', async (req, res) => {
     });
 
     // Buscar conversas de IA recentes (caso não tenham gerado pontos ainda)
-    const { data: conversations } = await supabase
+    const { data: conversations } = await adminSupabase
       .from('ai_conversations')
       .select('*')
       .eq('user_id', resolvedUserId)
@@ -362,7 +362,7 @@ router.get('/users/:userId/points', async (req, res) => {
     }
 
     console.log('✅ Gamification - Acesso permitido, buscando pontos...');
-    const { data: pointsData, error: pointsError } = await supabase
+    const { data: pointsData, error: pointsError } = await adminSupabase
       .from('points')
       .select('amount')
       .eq('user_id', resolvedUserId);
@@ -422,7 +422,7 @@ router.post('/users/:userId/points/add', async (req, res) => {
     }
 
     // Inserir pontos na tabela
-    const { data: pointTransaction, error } = await supabase
+    const { data: pointTransaction, error } = await adminSupabase
       .from('points')
       .insert({
         user_id: resolvedUserId,
@@ -441,7 +441,7 @@ router.post('/users/:userId/points/add', async (req, res) => {
     }
 
     // Buscar total de pontos atualizado
-    const { data: pointsData } = await supabase
+    const { data: pointsData } = await adminSupabase
       .from('points')
       .select('amount')
       .eq('user_id', resolvedUserId);
@@ -512,7 +512,7 @@ router.post('/users/:userId/quiz-result', async (req, res) => {
     const pointsEarned = basePoints + accuracyBonus + timeBonus;
     
     // Salvar resultado do quiz
-    const { data: quizResult, error: quizError } = await supabase
+    const { data: quizResult, error: quizError } = await adminSupabase
       .from('quiz_results')
       .insert({
         user_id: resolvedUserId,
@@ -533,7 +533,7 @@ router.post('/users/:userId/quiz-result', async (req, res) => {
     }
 
     // Adicionar pontos ao usuário
-    const { error: pointsError } = await supabase
+    const { error: pointsError } = await adminSupabase
       .from('points')
       .insert({
         user_id: resolvedUserId,
@@ -556,7 +556,7 @@ router.post('/users/:userId/quiz-result', async (req, res) => {
     });
 
     // Verificar se subiu de nível
-    const { data: allPoints } = await supabase
+    const { data: allPoints } = await adminSupabase
       .from('points')
       .select('amount')
       .eq('user_id', resolvedUserId);
@@ -600,7 +600,7 @@ router.get('/users/:userId/quiz-history', async (req, res) => {
     
     const offset = (page - 1) * limit;
     
-    const { data: results, error, count } = await supabase
+    const { data: results, error, count } = await adminSupabase
       .from('quiz_results')
       .select('*', { count: 'exact' })
       .eq('user_id', resolvedUserId)
@@ -642,7 +642,7 @@ router.get('/users/:userId/quiz-stats', async (req, res) => {
       return res.status(403).json({ error: 'Acesso negado' });
     }
     
-    const { data: results, error } = await supabase
+    const { data: results, error } = await adminSupabase
       .from('quiz_results')
       .select('score, correct_answers, total_questions, time_spent, quiz_type')
       .eq('user_id', resolvedUserId);
@@ -838,7 +838,7 @@ async function checkAndUnlockAchievements(userId, actionType, actionData = {}) {
     
     for (const achievement of relevantAchievements) {
       // Verificar se já foi desbloqueada
-      const { data: existingBadge } = await supabase
+      const { data: existingBadge } = await adminSupabase
         .from('badges')
         .select('*')
         .eq('user_id', userId)
@@ -857,7 +857,7 @@ async function checkAndUnlockAchievements(userId, actionType, actionData = {}) {
         
         switch (requirement.type) {
           case 'quiz_count':
-            const { count: quizCount } = await supabase
+            const { count: quizCount } = await adminSupabase
               .from('quiz_results')
               .select('*', { count: 'exact', head: true })
               .eq('user_id', userId);
@@ -872,7 +872,7 @@ async function checkAndUnlockAchievements(userId, actionType, actionData = {}) {
             break;
             
           case 'checkin_count':
-            const { count: checkinCount } = await supabase
+            const { count: checkinCount } = await adminSupabase
               .from('checkins')
               .select('*', { count: 'exact', head: true })
               .eq('user_id', userId);
@@ -880,7 +880,7 @@ async function checkAndUnlockAchievements(userId, actionType, actionData = {}) {
             break;
             
           case 'ai_conversation_count':
-            const { count: conversationCount } = await supabase
+            const { count: conversationCount } = await adminSupabase
               .from('ai_conversations')
               .select('*', { count: 'exact', head: true })
               .eq('user_id', userId);
@@ -906,7 +906,7 @@ async function checkAndUnlockAchievements(userId, actionType, actionData = {}) {
       
       if (shouldUnlock) {
         // Desbloquear a conquista
-        const { data: newBadge, error } = await supabase
+        const { data: newBadge, error } = await adminSupabase
           .from('badges')
           .insert({
             user_id: userId,
@@ -922,7 +922,7 @@ async function checkAndUnlockAchievements(userId, actionType, actionData = {}) {
         
         if (!error) {
           // Adicionar pontos pela conquista
-          await supabase
+          await adminSupabase
             .from('points')
             .insert({
               user_id: userId,
@@ -933,7 +933,7 @@ async function checkAndUnlockAchievements(userId, actionType, actionData = {}) {
             });
           
           // Registrar atividade
-          await supabase
+          await adminSupabase
             .from('gamification_activities')
             .insert({
               user_id: userId,
@@ -1000,7 +1000,7 @@ router.get('/users/:userId/points/transactions', async (req, res) => {
 
     const { limit = 50, offset = 0 } = req.query;
     
-    let query = supabase
+    let query = adminSupabase
       .from('points')
       .select('*')
       .eq('user_id', resolvedUserId)
@@ -1164,7 +1164,7 @@ router.post('/users/:userId/goals/auto-create', async (req, res) => {
       targetUserId = req.user.id;
     } else {
       // Buscar o ID do usuário especificado na tabela users
-      const { data: dbUser } = await supabase
+      const { data: dbUser } = await adminSupabase
         .from('users')
         .select('id')
         .or(`id.eq.${userId},auth_id.eq.${userId}`)
@@ -1182,7 +1182,7 @@ router.post('/users/:userId/goals/auto-create', async (req, res) => {
     
     console.log('🎯 Auto-create goal - Período:', { monthStart, monthEnd });
     
-    const { data: existingGoal, error: searchError } = await supabase
+    const { data: existingGoal, error: searchError } = await adminSupabase
       .from('user_goals')
       .select('*')
       .eq('user_id', targetUserId)
@@ -1203,7 +1203,7 @@ router.post('/users/:userId/goals/auto-create', async (req, res) => {
     const targetValue = Math.max(500, user_level * 100);
     console.log('🎯 Auto-create goal - Criando nova meta com target_value:', targetValue);
     
-    const { data: newGoal, error } = await supabase
+    const { data: newGoal, error } = await adminSupabase
       .from('user_goals')
       .insert({
         user_id: targetUserId,
@@ -1236,7 +1236,7 @@ router.post('/users/:userId/goals/auto-create', async (req, res) => {
 
 
 // GET /gamification/users/:userId/achievements - Obter conquistas do usuário
-router.get('/users/:userId/achievements', async (req, res) => {
+router.get('/users/:userId/achievements', authenticateUser, async (req, res) => {
   try {
     const { userId } = req.params;
     const { status } = req.query;
@@ -1252,7 +1252,7 @@ router.get('/users/:userId/achievements', async (req, res) => {
     }
     
     // Buscar badges do usuário
-    const { data: userBadges, error } = await supabase
+    const { data: userBadges, error } = await adminSupabase
       .from('badges')
       .select('*')
       .eq('user_id', resolvedUserId)
@@ -1321,7 +1321,7 @@ router.get('/users/:userId/achievements/:achievementId/progress', async (req, re
     }
     
     // Verificar se já foi desbloqueada
-    const { data: userBadge } = await supabase
+    const { data: userBadge } = await adminSupabase
       .from('badges')
       .select('*')
       .eq('user_id', resolvedUserId)
@@ -1351,7 +1351,7 @@ router.get('/users/:userId/achievements/:achievementId/progress', async (req, re
       
       switch (requirement.type) {
         case 'quiz_count':
-          const { count: quizCount } = await supabase
+          const { count: quizCount } = await adminSupabase
             .from('quiz_results')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', resolvedUserId);
@@ -1359,7 +1359,7 @@ router.get('/users/:userId/achievements/:achievementId/progress', async (req, re
           break;
           
         case 'checkin_count':
-          const { count: checkinCount } = await supabase
+          const { count: checkinCount } = await adminSupabase
             .from('checkins')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', resolvedUserId);
@@ -1367,7 +1367,7 @@ router.get('/users/:userId/achievements/:achievementId/progress', async (req, re
           break;
           
         case 'ai_conversation_count':
-          const { count: conversationCount } = await supabase
+          const { count: conversationCount } = await adminSupabase
             .from('ai_conversations')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', resolvedUserId);

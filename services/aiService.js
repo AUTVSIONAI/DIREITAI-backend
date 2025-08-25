@@ -1,4 +1,4 @@
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 
 // Função para analisar metadados de imagem sem enviar o conteúdo completo
 function analyzeImageMetadata(dataUrl) {
@@ -39,9 +39,11 @@ function analyzeImageMetadata(dataUrl) {
 
 // Limites por plano
 const PLAN_LIMITS = {
-  gratuito: 10,
-  engajado: 50,
-  premium: 200
+  gratuito: -1, // ilimitado para chat básico
+  cidadao: -1, // ilimitado para chat
+  premium: -1, // ilimitado para chat
+  pro: -1, // ilimitado para chat
+  elite: -1 // ilimitado para chat
 };
 
 // Verificar limites de uso do usuário
@@ -50,7 +52,8 @@ async function checkUserLimits(userId, userPlan = 'gratuito') {
     const today = new Date().toISOString().split('T')[0];
     
     // Contar conversas de hoje
-    const { count: todayUsage, error } = await supabase
+    // Usando adminSupabase para contornar políticas RLS
+    const { count: todayUsage, error } = await adminSupabase
       .from('ai_conversations')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
@@ -69,6 +72,17 @@ async function checkUserLimits(userId, userPlan = 'gratuito') {
 
     const limit = PLAN_LIMITS[userPlan] || PLAN_LIMITS.gratuito;
     const used = todayUsage || 0;
+    
+    // Se o limite é -1, significa ilimitado
+    if (limit === -1) {
+      return {
+        canUse: true,
+        used,
+        limit: -1,
+        remaining: -1 // -1 indica ilimitado
+      };
+    }
+    
     const remaining = Math.max(0, limit - used);
     const canUse = used < limit;
 
@@ -224,32 +238,32 @@ async function smartDispatcher(message, systemPrompt) {
       return result;
     } catch (error) {
       console.log('❌ Claude 3.5 Sonnet falhou:', error.message);
-      
-      // Se for erro 402 (sem créditos), tenta os modelos gratuitos
-      if (error.message.includes('402')) {
-        console.log('💡 Tentando modelos gratuitos da OpenRouter...');
-        
-        for (const model of FREE_OPENROUTER_MODELS) {
-          try {
-            console.log(`🔄 Tentando ${model}...`);
-            const result = await callOpenRouterModel(message, systemPrompt, model);
-            console.log(`✅ ${model} funcionou!`);
-            return result;
-          } catch (modelError) {
-            console.log(`❌ ${model} falhou:`, modelError.message);
-            continue; // Tenta o próximo modelo
-          }
-        }
-        
-        console.log('⚠️ Todos os modelos gratuitos da OpenRouter falharam');
-      }
     }
   }
   
-  // Se OpenRouter falhou completamente, tenta Together.ai
+  // Se Claude falhou ou não há chave OpenRouter, tenta modelos gratuitos da OpenRouter
+  if (openRouterKey) {
+    console.log('💡 Tentando modelos gratuitos da OpenRouter...');
+    
+    for (const model of FREE_OPENROUTER_MODELS) {
+      try {
+        console.log(`🔄 Tentando ${model}...`);
+        const result = await callOpenRouterModel(message, systemPrompt, model);
+        console.log(`✅ ${model} funcionou!`);
+        return result;
+      } catch (modelError) {
+        console.log(`❌ ${model} falhou:`, modelError.message);
+        continue; // Tenta o próximo modelo
+      }
+    }
+    
+    console.log('⚠️ Todos os modelos gratuitos da OpenRouter falharam');
+  }
+  
+  // Se OpenRouter falhou completamente, tenta Together.ai como último recurso
   if (togetherKey) {
     try {
-      console.log('🔄 Tentando Together.ai como fallback...');
+      console.log('🔄 Tentando Together.ai como fallback final...');
       const result = await callTogetherAPI(message, systemPrompt);
       console.log('✅ Together.ai funcionou!');
       return result;
@@ -339,7 +353,8 @@ async function saveConversation(userId, conversationId, userMessage, aiResponse,
     console.log('📋 Estrutura real da tabela ai_conversations: id, user_id, conversation_id, message, response, tokens_used, created_at, model_used, provider_used');
     
     // Usar a estrutura real da tabela ai_conversations
-    const { error: conversationError } = await supabase
+    // Usando adminSupabase para contornar políticas RLS
+    const { error: conversationError } = await adminSupabase
       .from('ai_conversations')
       .insert({
         user_id: userId,
@@ -377,7 +392,8 @@ async function saveConversation(userId, conversationId, userMessage, aiResponse,
 // Buscar conversas do usuário
 async function getUserConversations(userId, limit = 50) {
   try {
-    const { data: conversations, error } = await supabase
+    // Usando adminSupabase para contornar políticas RLS
+    const { data: conversations, error } = await adminSupabase
       .from('ai_conversations')
       .select('id, conversation_id, message, response, created_at, tokens_used, model_used')
       .eq('user_id', userId)
@@ -575,11 +591,114 @@ Responda APENAS no seguinte formato JSON:
   }
 }
 
+// Gerar conteúdo criativo usando LLM real
+async function generateCreativeContent(type, prompt, tone, length) {
+  try {
+    // Mapear tipos para descrições mais claras
+    const typeDescriptions = {
+      'social_post': 'post para redes sociais',
+      'meme': 'conceito de meme',
+      'video_script': 'roteiro de vídeo',
+      'speech': 'discurso',
+      'article': 'artigo',
+      'video': 'roteiro de vídeo'
+    };
+
+    // Mapear tons para instruções
+    const toneInstructions = {
+      'profissional': 'tom profissional, respeitoso e formal',
+      'inspirador': 'tom inspirador, motivacional e patriótico',
+      'educativo': 'tom educativo, didático e informativo',
+      'combativo': 'tom firme, determinado e assertivo',
+      'familiar': 'tom caloroso, próximo e acolhedor',
+      'formal': 'tom formal e respeitoso',
+      'casual': 'tom descontraído e acessível',
+      'inspirational': 'tom inspirador e motivacional',
+      'humorous': 'tom bem-humorado e cativante'
+    };
+
+    // Mapear tamanhos para instruções
+    const lengthInstructions = {
+      'curto': 'formato curto (50-100 palavras ou 1-2 parágrafos)',
+      'medio': 'formato médio (150-300 palavras ou 3-4 parágrafos)',
+      'longo': 'formato longo (400-600 palavras ou 5+ parágrafos)',
+      'short': 'formato curto (50-100 palavras)',
+      'medium': 'formato médio (150-300 palavras)',
+      'long': 'formato longo (400-600 palavras)'
+    };
+
+    const contentType = typeDescriptions[type] || 'conteúdo';
+    const toneInstruction = toneInstructions[tone] || 'tom neutro';
+    const lengthInstruction = lengthInstructions[length] || 'formato médio';
+
+    // Criar prompt específico para cada tipo de conteúdo
+    let systemPrompt = '';
+    let userPrompt = '';
+
+    switch (type) {
+      case 'social_post':
+        systemPrompt = `Você é um especialista em criação de conteúdo para redes sociais com foco em valores conservadores e patrióticos brasileiros. Crie posts engajantes que promovam valores como família, trabalho, fé e pátria.`;
+        userPrompt = `Crie um ${contentType} sobre "${prompt}" com ${toneInstruction} e ${lengthInstruction}. Inclua hashtags relevantes e emojis apropriados. O conteúdo deve ser autêntico e engajante.`;
+        break;
+
+      case 'meme':
+        systemPrompt = `Você é um criador de conceitos de memes com foco em valores conservadores brasileiros. Crie conceitos criativos e respeitosos que transmitam mensagens positivas.`;
+        userPrompt = `Crie um conceito de meme sobre "${prompt}" com ${toneInstruction}. Descreva a imagem sugerida, o texto superior e inferior, e o estilo visual. O meme deve ser criativo e respeitoso.`;
+        break;
+
+      case 'video_script':
+      case 'video':
+        systemPrompt = `Você é um roteirista especializado em conteúdo educativo e inspirador com valores conservadores brasileiros. Crie roteiros estruturados e envolventes.`;
+        userPrompt = `Crie um roteiro de vídeo sobre "${prompt}" com ${toneInstruction} e ${lengthInstruction}. Inclua introdução, desenvolvimento e conclusão. Adicione dicas de produção e sugestões visuais.`;
+        break;
+
+      case 'speech':
+        systemPrompt = `Você é um especialista em oratória e discursos com foco em valores conservadores e patrióticos brasileiros. Crie discursos inspiradores e bem estruturados.`;
+        userPrompt = `Crie um discurso sobre "${prompt}" com ${toneInstruction} e ${lengthInstruction}. Inclua abertura impactante, desenvolvimento consistente e fechamento memorável. Adicione orientações para apresentação.`;
+        break;
+
+      case 'article':
+        systemPrompt = `Você é um jornalista e escritor especializado em conteúdo conservador brasileiro. Crie artigos informativos e bem fundamentados.`;
+        userPrompt = `Escreva um artigo sobre "${prompt}" com ${toneInstruction} e ${lengthInstruction}. Inclua introdução, desenvolvimento com argumentos sólidos e conclusão. O artigo deve ser informativo e bem estruturado.`;
+        break;
+
+      default:
+        systemPrompt = `Você é um criador de conteúdo especializado em valores conservadores brasileiros.`;
+        userPrompt = `Crie conteúdo sobre "${prompt}" com ${toneInstruction} e ${lengthInstruction}.`;
+    }
+
+    // Usar o sistema de IA existente para gerar o conteúdo
+    const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
+    const aiResult = await generateResponse(fullPrompt);
+
+    if (!aiResult.success) {
+      throw new Error(`Falha ao gerar conteúdo: ${aiResult.error}`);
+    }
+
+    return {
+      success: true,
+      content: aiResult.content,
+      model: aiResult.model,
+      provider: aiResult.provider,
+      tokensUsed: aiResult.tokensUsed
+    };
+
+  } catch (error) {
+    console.error('Erro na geração de conteúdo criativo:', error);
+    return {
+      success: false,
+      error: error.message,
+      content: null
+    };
+  }
+}
+
 module.exports = {
   checkUserLimits,
   generateResponse,
   saveConversation,
   getUserConversations,
   smartDispatcher,
-  analyzeFakeNews
+  analyzeFakeNews,
+  generateCreativeContent
 };

@@ -1,36 +1,5 @@
-const { supabase } = require('../config/supabase');
-
-// Cliente admin para operações que precisam contornar RLS
+const { supabase, adminSupabase } = require('../config/supabase');
 const axios = require('axios');
-const adminSupabase = {
-  from: (table) => ({
-    select: (columns = '*') => ({
-      eq: (column, value) => ({
-        single: async () => {
-          try {
-            const response = await axios.get(
-              `${process.env.SUPABASE_URL}/rest/v1/${table}?select=${columns}&${column}=eq.${value}`,
-              {
-                headers: {
-                  'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY,
-                  'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
-            const data = response.data;
-            if (data && data.length > 0) {
-              return { data: data[0], error: null };
-            }
-            return { data: null, error: { message: 'No data found' } };
-          } catch (error) {
-            return { data: null, error: { message: error.message } };
-          }
-        }
-      })
-    })
-  })
-};
 
 // Função helper para resolver userId (aceita tanto auth_id quanto ID da tabela users)
 const resolveUserId = async (inputUserId) => {
@@ -80,19 +49,17 @@ const authenticateUser = async (req, res, next) => {
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     console.log('🔍 Verificando token:', token.substring(0, 20) + '...');
     
-    // Verificar o token com Supabase usando a API REST
+    // Verificar o token com Supabase usando o cliente
     let user;
     try {
-      const response = await axios.get(`${process.env.SUPABASE_URL}/auth/v1/user`, {
-        headers: {
-          'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      user = response.data;
+      const { data, error } = await supabase.auth.getUser(token);
+      if (error) {
+        console.error('❌ Auth error:', error.message);
+        return res.status(401).json({ error: 'Token inválido ou expirado' });
+      }
+      user = data.user;
     } catch (authError) {
-      console.error('❌ Auth error:', authError.response?.data?.message || authError.message);
+      console.error('❌ Auth error:', authError.message);
       console.log('🔍 Token completo:', token);
       return res.status(401).json({ error: 'Token inválido ou expirado' });
     }
@@ -124,7 +91,9 @@ const authenticateUser = async (req, res, next) => {
       email: dbUser.email,
       username: dbUser.username || user.email.split('@')[0],
       full_name: dbUser.full_name || user.user_metadata?.full_name || user.email.split('@')[0],
-      role: dbUser.role || (dbUser.is_admin ? 'admin' : 'user')
+      role: dbUser.role || (dbUser.is_admin ? 'admin' : 'user'),
+      plan: dbUser.plan || 'gratuito',
+      points: dbUser.points || 0
     };
     
     console.log('🔍 Final user role:', req.user.role);
@@ -235,9 +204,18 @@ const optionalAuthenticateUser = async (req, res, next) => {
   }
 };
 
+// Middleware para verificar se é admin
+const requireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
+  }
+  next();
+};
+
 module.exports = {
   authenticateUser,
   authenticateAdmin,
   optionalAuthenticateUser,
+  requireAdmin,
   resolveUserId
 };

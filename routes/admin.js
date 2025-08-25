@@ -1,8 +1,12 @@
 const express = require('express');
 const { authenticateUser, authenticateAdmin } = require('../middleware/auth');
+const { adminSupabase } = require('../config/supabase'); // Usar service role key
 const router = express.Router();
 
-// Usar supabase global
+// Alias para manter compatibilidade
+const supabase = adminSupabase;
+
+// Usar supabase global para operações que não precisam de service role
 const getSupabase = () => global.supabase || {
   from: () => ({
     select: () => Promise.resolve({ data: [], error: null }),
@@ -15,9 +19,8 @@ const getSupabase = () => global.supabase || {
 // Dashboard overview statistics
 router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
-    // Get user statistics
-    const supabase = getSupabase();
-    const { data: userStats } = await supabase
+    // Get user statistics - usar service role key para operações administrativas
+    const { data: userStats } = await adminSupabase
       .from('users')
       .select('plan, created_at')
       .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
@@ -28,7 +31,7 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
     ).length || 0;
 
     // Get check-in statistics
-    const { data: checkinStats } = await supabase
+    const { data: checkinStats } = await adminSupabase
       .from('checkins')
       .select('created_at')
       .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
@@ -36,7 +39,7 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
     const checkinsToday = checkinStats?.length || 0;
 
     // Get event statistics
-    const { data: eventStats } = await supabase
+    const { data: eventStats } = await adminSupabase
       .from('events')
       .select('status, created_at')
       .eq('status', 'active');
@@ -51,7 +54,7 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
     };
 
     // Get AI conversation statistics
-    const { data: aiStats } = await supabase
+    const { data: aiStats } = await adminSupabase
       .from('ai_conversations')
       .select('created_at')
       .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
@@ -59,7 +62,7 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
     const aiConversationsToday = aiStats?.length || 0;
 
     // Get moderation statistics
-    const { data: moderationStats } = await supabase
+    const { data: moderationStats } = await adminSupabase
       .from('content_moderation')
       .select('status')
       .eq('status', 'pending');
@@ -67,14 +70,14 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
     const pendingModeration = moderationStats?.length || 0;
 
     // Get recent events
-    const { data: recentEvents } = await supabase
+    const { data: recentEvents } = await adminSupabase
       .from('events')
       .select('id, title, location, city, state, current_participants, status, created_at')
       .order('created_at', { ascending: false })
       .limit(5);
 
     // Get top cities by user count
-    const { data: topCities } = await supabase
+    const { data: topCities } = await adminSupabase
       .from('users')
       .select('city, state')
       .not('city', 'is', null)
@@ -149,7 +152,7 @@ router.get('/users', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { plan, status, search, limit = 50, offset = 0 } = req.query;
 
-    let query = supabase
+    let query = adminSupabase
       .from('users')
       .select(`
         id,
@@ -184,12 +187,12 @@ router.get('/users', authenticateUser, authenticateAdmin, async (req, res) => {
     // Get additional statistics for each user
     const usersWithStats = await Promise.all(
       users.map(async (user) => {
-        const { data: checkins } = await supabase
+        const { data: checkins } = await adminSupabase
           .from('checkins')
           .select('id')
           .eq('user_id', user.id);
 
-        const { data: conversations } = await supabase
+        const { data: conversations } = await adminSupabase
           .from('ai_conversations')
           .select('id')
           .eq('user_id', user.id);
@@ -216,7 +219,7 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
   try {
     const { userId } = req.params;
 
-    const { data: user, error } = await supabase
+    const { data: user, error } = await adminSupabase
       .from('users')
       .select('*')
       .eq('id', userId)
@@ -227,7 +230,7 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
     }
 
     // Get user's check-ins
-    const { data: checkins } = await supabase
+    const { data: checkins } = await adminSupabase
       .from('checkins')
       .select(`
         *,
@@ -241,7 +244,7 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
       .limit(10);
 
     // Get user's AI conversations
-    const { data: conversations } = await supabase
+    const { data: conversations } = await adminSupabase
       .from('ai_conversations')
       .select('*')
       .eq('user_id', userId)
@@ -249,7 +252,7 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
       .limit(10);
 
     // Get user's orders
-    const { data: orders } = await supabase
+    const { data: orders } = await adminSupabase
       .from('orders')
       .select('*')
       .eq('user_id', userId)
@@ -298,7 +301,7 @@ router.put('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
     if (is_admin !== undefined) updateData.is_admin = is_admin;
     if (points !== undefined) updateData.points = points;
 
-    const { data: user, error } = await supabase
+    const { data: user, error } = await adminSupabase
       .from('users')
       .update(updateData)
       .eq('id', userId)
@@ -325,7 +328,7 @@ router.patch('/users/:userId/ban', authenticateUser, authenticateAdmin, async (r
     console.log(`🚫 Tentando banir usuário: ${userId}`);
 
     // Primeiro verificar se o usuário existe
-    const { data: existingUser, error: checkError } = await supabase
+    const { data: existingUser, error: checkError } = await adminSupabase
       .from('users')
       .select('id, email, full_name')
       .eq('id', userId)
@@ -338,7 +341,7 @@ router.patch('/users/:userId/ban', authenticateUser, authenticateAdmin, async (r
 
     console.log(`✅ Usuário encontrado: ${existingUser.email}`);
 
-    const { data: user, error } = await supabase
+    const { data: user, error } = await adminSupabase
       .from('users')
       .update({ 
         banned: true,
@@ -374,7 +377,7 @@ router.delete('/users/:userId', authenticateUser, authenticateAdmin, async (req,
     console.log(`🗑️ Tentando excluir usuário: ${userId}`);
 
     // Primeiro, verificar se o usuário existe
-    const { data: existingUser, error: checkError } = await supabase
+    const { data: existingUser, error: checkError } = await adminSupabase
       .from('users')
       .select('id, email, full_name')
       .eq('id', userId)
@@ -388,7 +391,7 @@ router.delete('/users/:userId', authenticateUser, authenticateAdmin, async (req,
     console.log(`✅ Usuário encontrado para exclusão: ${existingUser.email}`);
 
     // Deletar o usuário
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('users')
       .delete()
       .eq('id', userId);
@@ -414,7 +417,7 @@ router.get('/moderation', authenticateUser, authenticateAdmin, async (req, res) 
   try {
     const { status = 'pending', category, limit = 50, offset = 0 } = req.query;
 
-    let query = supabase
+    let query = adminSupabase
       .from('content_moderation')
       .select(`
         *,
@@ -458,7 +461,7 @@ router.put('/moderation/:contentId', authenticateUser, authenticateAdmin, async 
       return res.status(400).json({ error: 'Invalid action' });
     }
 
-    const { data: content, error } = await supabase
+    const { data: content, error } = await adminSupabase
       .from('content_moderation')
       .update({
         status: action === 'approve' ? 'approved' : 'rejected',
@@ -489,7 +492,7 @@ router.get('/store/products', authenticateUser, authenticateAdmin, async (req, r
   try {
     const { category, status, search, limit = 50, offset = 0 } = req.query;
 
-    let query = supabase
+    let query = adminSupabase
       .from('products')
       .select('*')
       .order('created_at', { ascending: false })
@@ -531,7 +534,7 @@ router.post('/store/products', authenticateUser, authenticateAdmin, async (req, 
       return res.status(400).json({ error: 'Name, price, and category are required' });
     }
 
-    const { data: product, error } = await supabase
+    const { data: product, error } = await adminSupabase
       .from('products')
       .insert([
         {
@@ -574,7 +577,7 @@ router.put('/store/products/:productId', authenticateUser, authenticateAdmin, as
     if (image !== undefined) updateData.image = image;
     if (active !== undefined) updateData.active = active;
 
-    const { data: product, error } = await supabase
+    const { data: product, error } = await adminSupabase
       .from('products')
       .update(updateData)
       .eq('id', productId)
@@ -597,7 +600,7 @@ router.delete('/store/products/:productId', authenticateUser, authenticateAdmin,
   try {
     const { productId } = req.params;
 
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('products')
       .delete()
       .eq('id', productId);
@@ -618,7 +621,7 @@ router.get('/store/orders', authenticateUser, authenticateAdmin, async (req, res
   try {
     const { status, search, limit = 50, offset = 0 } = req.query;
 
-    let query = supabase
+    let query = adminSupabase
       .from('orders')
       .select(`
         *,
@@ -664,7 +667,7 @@ router.put('/store/orders/:orderId', authenticateUser, authenticateAdmin, async 
     if (status) updateData.status = status;
     if (tracking_code) updateData.tracking_code = tracking_code;
 
-    const { data: order, error } = await supabase
+    const { data: order, error } = await adminSupabase
       .from('orders')
       .update(updateData)
       .eq('id', orderId)
@@ -703,7 +706,7 @@ router.get('/reports/financial', authenticateUser, authenticateAdmin, async (req
     }
 
     // Get orders for the period
-    const { data: orders } = await supabase
+    const { data: orders } = await adminSupabase
       .from('orders')
       .select('total, created_at, status')
       .gte('created_at', startDate.toISOString())
@@ -715,12 +718,14 @@ router.get('/reports/financial', authenticateUser, authenticateAdmin, async (req
 
     // Get subscription revenue (mock data)
     const subscriptionRevenue = {
-      engajado: 15750.00,
-      premium: 8900.00
+      cidadao: 15750.00,
+      premium: 4900.00,
+      pro: 8900.00,
+      elite: 12900.00
     };
 
     // Get top products
-    const { data: topProducts } = await supabase
+    const { data: topProducts } = await adminSupabase
       .from('order_items')
       .select(`
         product_name,
@@ -776,7 +781,8 @@ router.get('/settings', authenticateUser, authenticateAdmin, async (req, res) =>
       ai: {
         dailyLimitGratuito: 10,
         dailyLimitEngajado: 50,
-        dailyLimitPremium: -1, // unlimited
+        dailyLimitLider: 200,
+        dailyLimitSupremo: -1, // unlimited
         creativeAIEnabled: true
       },
       points: {
@@ -866,7 +872,7 @@ router.post('/announcements', authenticateUser, authenticateAdmin, async (req, r
       return res.status(400).json({ error: 'Title and content are required' });
     }
 
-    const { data: announcement, error } = await supabase
+    const { data: announcement, error } = await adminSupabase
       .from('announcements')
       .insert([
         {
@@ -898,7 +904,7 @@ router.get('/announcements', authenticateUser, authenticateAdmin, async (req, re
   try {
     const { active, limit = 50, offset = 0 } = req.query;
 
-    let query = supabase
+    let query = adminSupabase
       .from('announcements')
       .select(`
         *,
@@ -930,7 +936,7 @@ router.get('/announcements', authenticateUser, authenticateAdmin, async (req, re
 router.get('/live-map/users', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     // Get users with real location data
-    const { data: users, error } = await supabase
+    const { data: users, error } = await adminSupabase
       .from('users')
       .select(`
         id,
@@ -978,7 +984,7 @@ router.get('/live-map/users', authenticateUser, authenticateAdmin, async (req, r
 router.get('/live-map/events', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     // Get active events with real location data
-    const { data: activeEvents, error } = await supabase
+    const { data: activeEvents, error } = await adminSupabase
       .from('events')
       .select(`
         id,
@@ -1028,22 +1034,22 @@ router.get('/live-map/events', authenticateUser, authenticateAdmin, async (req, 
 router.get('/live-map/stats', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     // Get statistics by city
-    const { data: cityStats, error } = await supabase
+    const { data: cityStats, error } = await adminSupabase
       .rpc('get_city_statistics');
 
     if (error) {
       // If the RPC function doesn't exist, create basic stats
-      const { data: users } = await supabase
+      const { data: users } = await adminSupabase
         .from('users')
         .select('city, state')
         .not('city', 'is', null);
 
-      const { data: events } = await supabase
+      const { data: events } = await adminSupabase
         .from('events')
         .select('city, state')
         .not('city', 'is', null);
 
-      const { data: checkins } = await supabase
+      const { data: checkins } = await adminSupabase
         .from('checkins')
         .select('event_id, events(city, state)')
         .not('events.city', 'is', null);
@@ -1097,19 +1103,19 @@ router.get('/live-map/realtime', authenticateUser, authenticateAdmin, async (req
     const today = new Date().toISOString().split('T')[0];
 
     // Online users count
-    const { data: onlineUsersCount } = await supabase
+    const { data: onlineUsersCount } = await adminSupabase
       .from('users')
       .select('id', { count: 'exact' })
       .gte('last_login', thirtyMinutesAgo);
 
     // Active events count
-    const { data: activeEventsCount } = await supabase
+    const { data: activeEventsCount } = await adminSupabase
       .from('events')
       .select('id', { count: 'exact' })
       .eq('status', 'active');
 
     // Today's checkins count
-    const { data: todayCheckinsCount } = await supabase
+    const { data: todayCheckinsCount } = await adminSupabase
       .from('checkins')
       .select('id', { count: 'exact' })
       .gte('checked_in_at', today);
@@ -1130,7 +1136,7 @@ router.get('/live-map/realtime', authenticateUser, authenticateAdmin, async (req
 router.get('/city-stats', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     // Get user distribution by city
-    const { data: usersByCity, error: usersError } = await supabase
+    const { data: usersByCity, error: usersError } = await adminSupabase
       .from('users')
       .select('city, state')
       .not('city', 'is', null)
@@ -1142,7 +1148,7 @@ router.get('/city-stats', authenticateUser, authenticateAdmin, async (req, res) 
     }
 
     // Get events distribution by city
-    const { data: eventsByCity, error: eventsError } = await supabase
+    const { data: eventsByCity, error: eventsError } = await adminSupabase
       .from('events')
       .select('city, state')
       .not('city', 'is', null)
@@ -1186,6 +1192,411 @@ router.get('/city-stats', authenticateUser, authenticateAdmin, async (req, res) 
     res.json(statsArray);
   } catch (error) {
     console.error('Get city stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Upgrade user plan
+router.put('/users/:userId/upgrade-plan', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { newPlan } = req.body;
+
+    // Validate plan
+    const validPlans = ['gratuito', 'cidadao', 'premium', 'pro', 'elite'];
+    if (!validPlans.includes(newPlan)) {
+      return res.status(400).json({ error: 'Invalid plan specified' });
+    }
+
+    // Update user plan
+    const { data: updatedUser, error } = await adminSupabase
+      .from('users')
+      .update({ 
+        plan: newPlan,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId)
+      .select('id, email, name, plan')
+      .single();
+
+    if (error) {
+      console.error('Upgrade user plan error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (!updatedUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Log the upgrade action
+    console.log(`Admin ${req.user.id} upgraded user ${userId} to plan ${newPlan}`);
+
+    res.json({
+      message: 'User plan upgraded successfully',
+      user: updatedUser
+    });
+  } catch (error) {
+    console.error('Upgrade user plan error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin Notifications Routes
+// Get all notifications for admin dashboard
+router.get('/notifications', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, type, priority, is_read } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Usar service role key para operações administrativas
+    let query = adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    // Apply filters
+    if (type) {
+      query = query.eq('type', type);
+    }
+    if (priority) {
+      query = query.eq('priority', priority);
+    }
+    if (is_read !== undefined) {
+      query = query.eq('is_read', is_read === 'true');
+    }
+
+    const { data: notifications, error, count } = await query;
+
+    if (error) {
+      console.error('Get admin notifications error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    const totalPages = Math.ceil(count / limit);
+
+    res.json({
+      notifications: notifications || [],
+      total: count || 0,
+      totalPages,
+      currentPage: parseInt(page)
+    });
+  } catch (error) {
+    console.error('Get admin notifications error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Send broadcast notification
+router.post('/notifications/broadcast', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    console.log('🔍 Broadcast route - starting');
+    const {
+      title,
+      message,
+      type = 'info',
+      priority = 'medium',
+      targetUsers,
+      targetRoles,
+      channels = ['in_app'],
+      scheduledFor
+    } = req.body;
+
+    if (!title || !message) {
+      return res.status(400).json({ error: 'Title and message are required' });
+    }
+
+    // Usar service role key para operações administrativas
+    let userIds = [];
+
+    // Get target users
+    if (targetUsers && targetUsers.length > 0) {
+      userIds = targetUsers;
+    } else if (targetRoles && targetRoles.length > 0) {
+      // Get users by roles
+      const { data: users, error: usersError } = await adminSupabase
+        .from('users')
+        .select('id')
+        .in('role', targetRoles);
+      
+      if (usersError) {
+        return res.status(400).json({ error: usersError.message });
+      }
+      
+      userIds = users?.map(u => u.id) || [];
+    } else {
+      // Broadcast to all users
+      const { data: users, error: usersError } = await adminSupabase
+        .from('users')
+        .select('id');
+      
+      if (usersError) {
+        return res.status(400).json({ error: usersError.message });
+      }
+      
+      userIds = users?.map(u => u.id) || [];
+    }
+
+    if (userIds.length === 0) {
+      return res.status(400).json({ error: 'No target users found' });
+    }
+
+    // Create notifications for each user
+    const notifications = userIds.map(userId => ({
+      user_id: userId,
+      type,
+      category: 'system', // Usar categoria válida
+      title,
+      message,
+      priority,
+      scheduled_for: scheduledFor || null,
+      created_at: new Date().toISOString()
+    }));
+
+    const { data: createdNotifications, error } = await adminSupabase
+      .from('notifications')
+      .insert(notifications)
+      .select();
+
+    if (error) {
+      console.error('Create broadcast notifications error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Log the broadcast action
+    console.log(`Admin ${req.user.id} sent broadcast notification to ${userIds.length} users`);
+
+    res.status(201).json({
+      notificationId: createdNotifications?.[0]?.id,
+      status: 'sent',
+      message: `Notification sent to ${userIds.length} users`,
+      recipients: userIds.length
+    });
+  } catch (error) {
+    console.error('Send broadcast notification error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get notification statistics
+router.get('/notifications/stats', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    // Usar service role key para operações administrativas
+    const today = new Date().toISOString().split('T')[0];
+    const thisWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const thisMonth = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Get total notifications
+    const { count: totalNotifications } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true });
+
+    // Get sent notifications (notifications with sent_at)
+    const { count: sentNotifications } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .not('sent_at', 'is', null);
+
+    // Get pending notifications (scheduled but not sent)
+    const { count: pendingNotifications } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .not('scheduled_for', 'is', null)
+      .is('sent_at', null)
+      .gte('scheduled_for', new Date().toISOString());
+
+    // Get failed notifications from notification_queue
+    const { count: failedNotifications } = await adminSupabase
+      .from('notification_queue')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'failed');
+
+    // Get today's notifications
+    const { count: todayNotifications } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', today);
+
+    // Get this week's notifications
+    const { count: weekNotifications } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', thisWeek);
+
+    // Get this month's notifications
+    const { count: monthNotifications } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', thisMonth);
+
+    // Get unread notifications count
+    const { count: unreadNotifications } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_read', false);
+
+    // Get notifications by type
+    const { data: notificationsByType } = await adminSupabase
+      .from('notifications')
+      .select('type')
+      .gte('created_at', thisMonth);
+
+    const typeStats = {};
+    notificationsByType?.forEach(n => {
+      typeStats[n.type] = (typeStats[n.type] || 0) + 1;
+    });
+
+    // Get notifications by category
+    const { data: notificationsByCategory } = await adminSupabase
+      .from('notifications')
+      .select('category')
+      .gte('created_at', thisMonth);
+
+    const categoryStats = {};
+    notificationsByCategory?.forEach(n => {
+      categoryStats[n.category] = (categoryStats[n.category] || 0) + 1;
+    });
+
+    // Get queue statistics
+    const { data: queueStats } = await adminSupabase
+      .from('notification_queue')
+      .select('status, channel')
+      .gte('created_at', thisMonth);
+
+    const queueByStatus = {};
+    const queueByChannel = {};
+    queueStats?.forEach(q => {
+      queueByStatus[q.status] = (queueByStatus[q.status] || 0) + 1;
+      queueByChannel[q.channel] = (queueByChannel[q.channel] || 0) + 1;
+    });
+
+    res.json({
+      // Cards principais
+      total: totalNotifications || 0,
+      sent: sentNotifications || 0,
+      pending: pendingNotifications || 0,
+      failed: failedNotifications || 0,
+      
+      // Estatísticas temporais
+      today: todayNotifications || 0,
+      thisWeek: weekNotifications || 0,
+      thisMonth: monthNotifications || 0,
+      unread: unreadNotifications || 0,
+      
+      // Estatísticas por tipo e categoria
+      byType: typeStats,
+      byCategory: categoryStats,
+      
+      // Estatísticas da fila
+      queueByStatus: queueByStatus,
+      queueByChannel: queueByChannel,
+      
+      // Métricas calculadas
+      deliveryRate: totalNotifications > 0 ? ((sentNotifications / totalNotifications) * 100).toFixed(2) : '0.00',
+      failureRate: totalNotifications > 0 ? ((failedNotifications / totalNotifications) * 100).toFixed(2) : '0.00'
+    });
+  } catch (error) {
+    console.error('Get notification stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get analytics data for notifications dashboard
+router.get('/analytics', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { period = 'month' } = req.query;
+    
+    // Make internal request to notifications analytics
+    const axios = require('axios');
+    const baseURL = process.env.NODE_ENV === 'production' 
+      ? 'https://your-backend-url.com' 
+      : 'http://localhost:3001';
+    
+    try {
+      // Get analytics overview from notifications service
+      const overviewResponse = await axios.get(`${baseURL}/api/notifications/analytics/overview`, {
+        params: { period },
+        headers: {
+          'Authorization': req.headers.authorization
+        }
+      });
+      
+      const analyticsData = overviewResponse.data;
+      
+      // Format data for frontend consumption
+      const formattedData = {
+        notifications: {
+          total: analyticsData.notifications?.total || 0,
+          read: analyticsData.notifications?.read || 0,
+          clicked: analyticsData.notifications?.clicked || 0,
+          dismissed: analyticsData.notifications?.dismissed || 0,
+          readRate: analyticsData.notifications?.read_rate || 0,
+          clickRate: analyticsData.notifications?.click_rate || 0,
+          dismissalRate: analyticsData.notifications?.dismissal_rate || 0,
+          byType: analyticsData.notifications?.by_type || {},
+          byStatus: analyticsData.notifications?.by_status || {}
+        },
+        campaigns: {
+          total: analyticsData.campaigns?.total || 0,
+          totalSent: analyticsData.campaigns?.emails_sent || 0,
+          totalDelivered: analyticsData.campaigns?.emails_delivered || 0,
+          totalOpened: analyticsData.campaigns?.emails_opened || 0,
+          totalClicked: analyticsData.campaigns?.emails_clicked || 0,
+          deliveryRate: analyticsData.campaigns?.delivery_rate || 0,
+          openRate: analyticsData.campaigns?.open_rate || 0,
+          clickRate: analyticsData.campaigns?.click_rate || 0
+        },
+        period: analyticsData.period
+      };
+      
+      res.json(formattedData);
+    } catch (apiError) {
+      console.log('API call failed, using fallback data:', apiError.message);
+      
+      // Fallback: get basic stats directly from database
+      const { count: totalNotifications } = await adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true });
+
+      const { count: readNotifications } = await adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_read', true);
+
+      const { count: clickedNotifications } = await adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .not('clicked_at', 'is', null);
+
+      const readRate = totalNotifications > 0 ? ((readNotifications / totalNotifications) * 100).toFixed(2) : 0;
+      const clickRate = totalNotifications > 0 ? ((clickedNotifications / totalNotifications) * 100).toFixed(2) : 0;
+
+      res.json({
+        notifications: {
+          total: totalNotifications || 0,
+          read: readNotifications || 0,
+          clicked: clickedNotifications || 0,
+          dismissed: 0,
+          readRate: parseFloat(readRate),
+          clickRate: parseFloat(clickRate),
+          dismissalRate: 0,
+          byType: {},
+          byStatus: {}
+        },
+        campaigns: {
+          total: 0,
+          totalSent: 0,
+          totalDelivered: 0,
+          totalOpened: 0,
+          totalClicked: 0,
+          deliveryRate: 0,
+          openRate: 0,
+          clickRate: 0
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Get analytics error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

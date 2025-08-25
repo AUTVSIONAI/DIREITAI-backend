@@ -11,56 +11,75 @@ const { authenticateUser } = require('../middleware/auth');
 
 // Planos disponíveis
 const PLANS = {
-  engajado: {
-    name: 'Patriota Engajado',
-    price: 2990, // R$ 29,90 em centavos
+  gratuito: {
+    name: 'Patriota Gratuito',
+    price: 0, // Gratuito
     currency: 'brl',
     interval: 'month',
     features: [
-      '5 análises de fake news por dia',
-      '20 mensagens com IA Criativa por dia',
-      '3 conversas com agentes políticos por dia',
-      'Acesso completo à Constituição',
-      'Histórico completo de análises',
-      'Compartilhamento de resultados',
-      'Sem anúncios',
-      'Badge especial no perfil',
-      'Notificações prioritárias'
+      'Chat DireitaGPT ilimitado (LLM open-source)',
+      'IA Criativa: até 5 textos por dia',
+      'Detector de Fake News: 1 análise por dia',
+      '1 agente político básico',
+      'Quiz Constituição + gamificação',
+      'Suporte básico por e-mail'
     ]
   },
-  lider: {
-    name: 'Patriota Líder',
-    price: 5990, // R$ 59,90 em centavos
+  cidadao: {
+    name: 'Patriota Cidadão',
+    price: 1990, // R$ 19,90 em centavos
     currency: 'brl',
     interval: 'month',
     features: [
-      '10 análises de fake news por dia',
-      '50 mensagens com IA Criativa por dia',
-      'Conversas ilimitadas com agentes políticos',
-      'Acesso completo à Constituição',
-      'Análises com IA premium (modelos mais avançados)',
-      'Relatórios semanais personalizados',
-      'Acesso antecipado a novos recursos',
-      'Suporte prioritário',
-      'API para desenvolvedores (100 calls/dia)'
+      'Chat DireitaGPT ilimitado',
+      'IA Criativa: até 20 textos por dia',
+      'Detector de Fake News: 5 análises por dia',
+      'Até 3 agentes políticos',
+      'Ranking local e check-in em eventos',
+      'Suporte prioritário'
     ]
   },
-  supremo: {
-    name: 'Patriota Supremo',
-    price: 8990, // R$ 89,90 em centavos
+  premium: {
+    name: 'Patriota Premium',
+    price: 3990, // R$ 39,90 em centavos
     currency: 'brl',
     interval: 'month',
     features: [
-      '20 análises de fake news por dia',
-      'IA Criativa ilimitada',
-      'Todos os agentes políticos ilimitados',
-      'Acesso completo à Constituição',
-      'IA premium com modelos exclusivos',
-      'Consultoria política personalizada (1h/mês)',
-      'Criação de eventos próprios',
-      'Rede de contatos VIP',
-      'API premium (1000 calls/dia)',
-      'White-label para organizações'
+      'Chat DireitaGPT ilimitado',
+      'IA Criativa: até 50 textos por dia',
+      'Detector de Fake News: 15 análises por dia',
+      'Agentes políticos ilimitados',
+      'Ranking nacional e global',
+      'Relatórios simples'
+    ]
+  },
+  pro: {
+    name: 'Patriota Pro',
+    price: 6990, // R$ 69,90 em centavos
+    currency: 'brl',
+    interval: 'month',
+    features: [
+      'Chat DireitaGPT ilimitado',
+      'IA Criativa: até 100 textos por dia',
+      'Detector de Fake News: 20 análises por dia',
+      'Agentes políticos ilimitados',
+      'Relatórios avançados semanais',
+      'Pontos em dobro na gamificação',
+      'Suporte 24/7'
+    ]
+  },
+  elite: {
+    name: 'Patriota Elite',
+    price: 11990, // R$ 119,90 em centavos
+    currency: 'brl',
+    interval: 'month',
+    features: [
+      'Chat DireitaGPT ilimitado',
+      'IA Criativa: até 100 textos por dia',
+      'Detector de Fake News: 30 análises por dia',
+      'Agentes políticos ilimitados',
+      'Relatórios avançados + badge VIP',
+      'Suporte premium'
     ]
   }
 };
@@ -266,19 +285,29 @@ router.get('/plans', async (req, res) => {
     if (USE_MOCK_DATA) {
       // Dados mock para desenvolvimento
       const mockPlans = {
-        engajado: {
-          ...PLANS.engajado,
-          id: 'mock_engajado',
+        gratuito: {
+          ...PLANS.gratuito,
+          id: 'mock_gratuito',
           active: true
         },
-        lider: {
-          ...PLANS.lider,
-          id: 'mock_lider',
+        cidadao: {
+          ...PLANS.cidadao,
+          id: 'mock_cidadao',
           active: true
         },
-        supremo: {
-          ...PLANS.supremo,
-          id: 'mock_supremo',
+        premium: {
+          ...PLANS.premium,
+          id: 'mock_premium',
+          active: true
+        },
+        pro: {
+          ...PLANS.pro,
+          id: 'mock_pro',
+          active: true
+        },
+        elite: {
+          ...PLANS.elite,
+          id: 'mock_elite',
           active: true
         }
       };

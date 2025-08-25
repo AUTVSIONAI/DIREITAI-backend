@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
@@ -353,6 +353,370 @@ router.put('/plan', authenticateUser, async (req, res) => {
     res.json({ message: 'Plan updated successfully', profile: data });
   } catch (error) {
     console.error('Update plan error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user usage statistics
+router.get('/usage-stats', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userPlan = req.user.plan || 'gratuito';
+    
+
+
+    // Get total AI conversations count
+    const { count: totalConversations } = await adminSupabase
+      .from('ai_conversations')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    // Get total fake news analyses count
+    const { count: totalFakeNewsAnalyses } = await adminSupabase
+      .from('fake_news_checks')
+      .select('*', { count: 'exact', head: true })
+      .eq('usuario_id', userId);
+
+    // Get today's usage for daily limits
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const { count: todayConversations } = await adminSupabase
+      .from('ai_conversations')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', today.toISOString())
+      .lt('created_at', tomorrow.toISOString());
+
+    const { count: todayFakeNewsAnalyses } = await adminSupabase
+      .from('fake_news_checks')
+      .select('*', { count: 'exact', head: true })
+      .eq('usuario_id', userId)
+      .gte('created_at', today.toISOString())
+      .lt('created_at', tomorrow.toISOString());
+
+    // Get political agents usage - check if agents table exists, otherwise count unique conversation_ids
+    let politicalAgentsUsed = 0;
+    try {
+      // Try to get unique conversation_ids from ai_conversations as a proxy for agent usage
+      const { data: agentConversations, error: agentError } = await adminSupabase
+        .from('ai_conversations')
+        .select('conversation_id')
+        .eq('user_id', userId);
+      
+      if (!agentError && agentConversations) {
+        // Count unique conversation_ids as political agent usage
+        const uniqueConversations = new Set(agentConversations.map(c => c.conversation_id));
+        politicalAgentsUsed = uniqueConversations.size;
+      }
+    } catch (error) {
+      console.log('Error counting political agents:', error);
+      politicalAgentsUsed = 0;
+    }
+
+    // Calculate days remaining until plan renewal
+    const { data: userProfile } = await supabase
+      .from('users')
+      .select('subscription_current_period_end, created_at')
+      .eq('id', userId)
+      .single();
+
+    let daysRemaining = 0;
+    const currentDate = new Date();
+    
+    if (userProfile?.subscription_current_period_end) {
+      // Use subscription end date if available
+      const expirationDate = new Date(userProfile.subscription_current_period_end);
+      const timeDiff = expirationDate.getTime() - currentDate.getTime();
+      daysRemaining = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
+    } else {
+      // For users without subscription end date, calculate based on creation date + 30 days
+      const creationDate = new Date(userProfile?.created_at || new Date());
+      const renewalDate = new Date(creationDate);
+      renewalDate.setDate(renewalDate.getDate() + 30);
+      const timeDiff = renewalDate.getTime() - currentDate.getTime();
+      daysRemaining = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
+    }
+
+    // Define limits based on plan (sincronizado com subscription_plans)
+    const limits = {
+      gratuito: {
+        ai_conversations: 10,
+        fake_news_analyses: 1,
+        political_agents: 3
+      },
+      engajado: {
+        ai_conversations: 100,
+        fake_news_analyses: 10,
+        political_agents: 20
+      },
+      lider: {
+        ai_conversations: -1, // unlimited
+        fake_news_analyses: -1, // unlimited
+        political_agents: -1 // unlimited
+      },
+      // Mapeamento para planos antigos/alternativos
+      premium: {
+        ai_conversations: 100,
+        fake_news_analyses: 25,
+        political_agents: 20
+      },
+      supremo: {
+        ai_conversations: -1, // unlimited
+        fake_news_analyses: -1, // unlimited
+        political_agents: -1 // unlimited
+      }
+    };
+
+    const planLimits = limits[userPlan] || limits.gratuito;
+
+    res.json({
+      plan: userPlan,
+      daysRemaining,
+      usage: {
+        ai_conversations: {
+          used: todayConversations || 0, // Usar uso diário para ser consistente com limites diários
+          used_today: todayConversations || 0,
+          used_total: totalConversations || 0, // Adicionar total histórico separadamente
+          limit: planLimits.ai_conversations,
+          remaining: planLimits.ai_conversations === -1 ? -1 : Math.max(0, planLimits.ai_conversations - (todayConversations || 0))
+        },
+        fake_news_analyses: {
+          used: todayFakeNewsAnalyses || 0, // Usar uso diário para ser consistente com limites diários
+          used_today: todayFakeNewsAnalyses || 0,
+          used_total: totalFakeNewsAnalyses || 0, // Adicionar total histórico separadamente
+          limit: planLimits.fake_news_analyses,
+          remaining: planLimits.fake_news_analyses === -1 ? -1 : Math.max(0, planLimits.fake_news_analyses - (todayFakeNewsAnalyses || 0))
+        },
+        political_agents: {
+          used: politicalAgentsUsed || 0, // Este já é um total, mas vamos manter consistência
+          used_total: politicalAgentsUsed || 0,
+          limit: planLimits.political_agents,
+          remaining: planLimits.political_agents === -1 ? -1 : Math.max(0, planLimits.political_agents - (politicalAgentsUsed || 0))
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get usage stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user usage history
+router.get('/usage-history', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { days = 7 } = req.query;
+    
+    // Calculate date range
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(days));
+    
+    // Get AI conversations history
+    const { data: aiConversations, error: aiError } = await supabase
+      .from('ai_conversations')
+      .select('created_at, model_used')
+      .eq('user_id', userId)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString())
+      .order('created_at', { ascending: true });
+    
+    if (aiError) {
+      console.error('Error fetching AI conversations:', aiError);
+    }
+    
+    // Get fake news analyses history
+    const { data: fakeNewsAnalyses, error: fakeNewsError } = await supabase
+      .from('fake_news_checks')
+      .select('created_at, resultado')
+      .eq('usuario_id', userId)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString())
+      .order('created_at', { ascending: true });
+    
+    if (fakeNewsError) {
+      console.error('Error fetching fake news analyses:', fakeNewsError);
+    }
+    
+    // Group data by date
+    const dailyUsage = {};
+    
+    // Process AI conversations
+    (aiConversations || []).forEach(conversation => {
+      const date = conversation.created_at.split('T')[0];
+      if (!dailyUsage[date]) {
+        dailyUsage[date] = {
+          date,
+          ai_conversations: 0,
+          fake_news_analyses: 0
+        };
+      }
+      dailyUsage[date].ai_conversations++;
+    });
+    
+    // Process fake news analyses
+    (fakeNewsAnalyses || []).forEach(analysis => {
+      const date = analysis.created_at.split('T')[0];
+      if (!dailyUsage[date]) {
+        dailyUsage[date] = {
+          date,
+          ai_conversations: 0,
+          fake_news_analyses: 0
+        };
+      }
+      dailyUsage[date].fake_news_analyses++;
+    });
+    
+    // Convert to array and fill missing dates
+    const history = [];
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0];
+      history.push(dailyUsage[dateStr] || {
+        date: dateStr,
+        ai_conversations: 0,
+        fake_news_analyses: 0
+      });
+    }
+    
+    res.json({
+      period: `${days} days`,
+      start_date: startDate.toISOString().split('T')[0],
+      end_date: endDate.toISOString().split('T')[0],
+      history
+    });
+  } catch (error) {
+    console.error('Get usage history error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user plan information
+router.get('/plan-info', authenticateUser, async (req, res) => {
+  try {
+    const userPlan = req.user.plan || 'gratuito';
+    const subscriptionStatus = req.user.subscription_status || 'inactive';
+    const billingCycle = req.user.billing_cycle || 'monthly';
+
+    // Define plan details
+    const planDetails = {
+      gratuito: {
+        name: 'Gratuito',
+        price: 0,
+        features: [
+          '10 conversas diárias com IA',
+          '1 análise de fake news por dia',
+          'Acesso básico aos políticos',
+          'Check-in em eventos'
+        ],
+        limits: {
+          ai_conversations: 10,
+          fake_news_analyses: 1
+        }
+      },
+      cidadao: {
+        name: 'Patriota Cidadão',
+        price: 19.90,
+        features: [
+          'Chat DireitaGPT ilimitado',
+          'IA Criativa: até 20 textos por dia',
+          'Detector de Fake News: 5 análises por dia',
+          'Até 3 agentes políticos',
+          'Ranking local e check-in em eventos',
+          'Suporte prioritário'
+        ],
+        limits: {
+          ai_conversations: -1,
+          fake_news_analyses: 5
+        }
+      },
+      premium: {
+        name: 'Patriota Premium',
+        price: 39.90,
+        features: [
+          'Chat DireitaGPT ilimitado',
+          'IA Criativa: até 50 textos por dia',
+          'Detector de Fake News: 15 análises por dia',
+          'Agentes políticos ilimitados',
+          'Ranking nacional e global',
+          'Relatórios simples'
+        ],
+        limits: {
+          ai_conversations: -1,
+          fake_news_analyses: 15
+        }
+      },
+      pro: {
+        name: 'Patriota Pro',
+        price: 69.90,
+        features: [
+          'Chat DireitaGPT ilimitado',
+          'IA Criativa: até 100 textos por dia',
+          'Detector de Fake News: 20 análises por dia',
+          'Agentes políticos ilimitados',
+          'Relatórios avançados semanais',
+          'Pontos em dobro na gamificação',
+          'Suporte 24/7'
+        ],
+        limits: {
+          ai_conversations: -1,
+          fake_news_analyses: 20
+        }
+      },
+      elite: {
+        name: 'Patriota Elite',
+        price: 119.90,
+        features: [
+          'Chat DireitaGPT ilimitado',
+          'IA Criativa: até 100 textos por dia',
+          'Detector de Fake News: 30 análises por dia',
+          'Agentes políticos ilimitados',
+          'Relatórios avançados + badge VIP',
+          'Suporte premium'
+        ],
+        limits: {
+          ai_conversations: -1,
+          fake_news_analyses: 30
+        }
+      }
+    };
+
+    const currentPlan = planDetails[userPlan] || planDetails.gratuito;
+
+    // Calculate next billing date (mock data for now)
+    let nextBilling = null;
+    if (subscriptionStatus === 'active' && userPlan !== 'gratuito') {
+      const now = new Date();
+      if (billingCycle === 'yearly') {
+        nextBilling = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate());
+      } else {
+        // Para cálculo mensal, usar o construtor Date para evitar problemas com datas inválidas
+        const nextMonth = now.getMonth() + 1;
+        const nextYear = nextMonth > 11 ? now.getFullYear() + 1 : now.getFullYear();
+        const adjustedMonth = nextMonth > 11 ? 0 : nextMonth;
+        
+        // Ajustar o dia para evitar problemas com meses que têm menos dias
+        const lastDayOfNextMonth = new Date(nextYear, adjustedMonth + 1, 0).getDate();
+        const dayToUse = Math.min(now.getDate(), lastDayOfNextMonth);
+        
+        nextBilling = new Date(nextYear, adjustedMonth, dayToUse);
+      }
+    }
+
+    res.json({
+      name: currentPlan.name,
+      price: currentPlan.price,
+      billingCycle: billingCycle,
+      nextBilling: nextBilling ? nextBilling.toISOString() : null,
+      current_plan: userPlan,
+      subscription_status: subscriptionStatus,
+      plan_details: currentPlan,
+      available_plans: planDetails
+    });
+  } catch (error) {
+    console.error('Get plan info error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

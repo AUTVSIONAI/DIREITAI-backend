@@ -64,20 +64,22 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
-    // Criar perfil básico para evitar problemas de RLS
-    const profile = {
-      id: data.user.id,
-      auth_id: data.user.id,
-      email: data.user.email,
-      username: data.user.email.split('@')[0],
-      full_name: data.user.user_metadata?.full_name || data.user.email.split('@')[0],
-      role: 'user'
-    };
+    // Buscar o perfil real do usuário na tabela users
+    const { data: profileData, error: profileError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('auth_id', data.user.id)
+      .single();
+
+    if (profileError) {
+      console.error('Erro ao buscar perfil do usuário:', profileError);
+      return res.status(400).json({ error: 'Perfil do usuário não encontrado' });
+    }
 
     res.json({
       message: 'Login successful',
       user: data.user,
-      profile,
+      profile: profileData, // Usar dados reais da tabela users
       session: data.session,
     });
   } catch (error) {

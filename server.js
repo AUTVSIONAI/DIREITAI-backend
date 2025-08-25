@@ -98,14 +98,21 @@ app.use('/api/admin/content-moderation', require('./routes/contentModeration'));
 app.use('/api/admin/financial', require('./routes/financialReports'));
 app.use('/api/admin/store', require('./routes/storeManagement'));
 app.use('/api/admin/politicians', require('./routes/adminPoliticians'));
+app.use('/api/admin/local-politicians', require('./routes/localPoliticiansData'));
 app.use('/api/manifestations', require('./routes/manifestations'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/plans', require('./routes/plans'));
 app.use('/api/gamification', require('./routes/gamification'));
 app.use('/api/rsvp', require('./routes/rsvp'));
 
+
+
+app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/announcements', require('./routes/announcements'));
+
 // Novas rotas para funcionalidades de políticos
 app.use('/api/politicians', require('./routes/politicians'));
+app.use('/api/local-politicians', require('./routes/localPoliticians'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/blog', require('./routes/blog'));
 app.use('/api/ratings', require('./routes/ratings'));
@@ -114,6 +121,7 @@ app.use('/api/surveys', require('./routes/surveys'));
 app.use('/api/fake-news', require('./routes/fakeNews'));
 app.use('/api/public', require('./routes/publicRegistration'));
 app.use('/api/constitution', require('./routes/constitution'));
+app.use('/api/constitution-downloads', require('./routes/constitutionDownloads'));
 
 // Root endpoint
 app.get('/', (req, res) => {

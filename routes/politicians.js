@@ -6,33 +6,91 @@ const router = express.Router();
 // Listar políticos
 router.get('/', async (req, res) => {
   try {
-    console.log('🔍 Iniciando busca de políticos...');
-    const { state, party, position, search, limit = 12, page = 1 } = req.query;
+    const { state, party, position, search, limit = 12, page = 1, use_real_data } = req.query;
     
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    
-    console.log('🔍 Parâmetros:', { state, party, position, search, limit, page, offset });
-    
-    // Primeiro, vamos testar uma consulta simples
-    console.log('🔍 Testando consulta simples...');
-    const { data: testData, error: testError } = await supabase
-      .from('politicians')
-      .select('id, name')
-      .limit(1);
-    
-    if (testError) {
-      console.error('❌ Erro na consulta de teste:', testError);
-      return res.status(500).json({ 
-        error: 'Erro na consulta de teste', 
-        details: testError.message 
-      });
+    // Se solicitado dados reais de deputados federais
+    if (use_real_data === 'true' && position === 'deputado') {
+      try {
+        const externalAPIs = require('../services/externalAPIs');
+        const deputadosList = await externalAPIs.fetchDeputadosList();
+        
+        let filteredDeputados = deputadosList;
+        
+        // Aplicar filtros
+        if (state) {
+          filteredDeputados = filteredDeputados.filter(dep => 
+            dep.ultimoStatus?.siglaUf === state.toUpperCase()
+          );
+        }
+        if (party) {
+          filteredDeputados = filteredDeputados.filter(dep => 
+            dep.ultimoStatus?.siglaPartido === party.toUpperCase()
+          );
+        }
+        if (search) {
+          filteredDeputados = filteredDeputados.filter(dep => 
+            dep.nome.toLowerCase().includes(search.toLowerCase())
+          );
+        }
+        
+        // Paginação
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+        const paginatedDeputados = filteredDeputados.slice(offset, offset + parseInt(limit));
+        
+        // Formatar dados para o frontend
+        const formattedDeputados = paginatedDeputados.map(dep => ({
+          id: dep.id,
+          external_id: dep.id.toString(),
+          name: dep.nome,
+          full_name: dep.nome,
+          party: dep.ultimoStatus?.siglaPartido,
+          state: dep.ultimoStatus?.siglaUf,
+          position: 'deputado federal',
+          level: 'federal',
+          photo_url: dep.ultimoStatus?.urlFoto,
+          email: dep.ultimoStatus?.gabinete?.email,
+          phone: dep.ultimoStatus?.gabinete?.telefone,
+          office: dep.ultimoStatus?.gabinete?.nome,
+          source: 'camara_oficial',
+          expenses: {
+            simulated: true,
+            total_year: Math.floor(Math.random() * 500000) + 100000,
+            categories: {
+              'Combustíveis e lubrificantes': Math.floor(Math.random() * 50000) + 10000,
+              'Manutenção de escritório de apoio': Math.floor(Math.random() * 30000) + 5000,
+              'Locação ou fretamento de veículos': Math.floor(Math.random() * 40000) + 8000
+            }
+          }
+        }));
+        
+        const totalPages = Math.ceil(filteredDeputados.length / parseInt(limit));
+        
+        return res.json({
+          success: true,
+          data: formattedDeputados,
+          pagination: {
+            page: parseInt(page),
+            pages: totalPages,
+            limit: parseInt(limit),
+            total: filteredDeputados.length
+          },
+          source: 'camara_oficial'
+        });
+        
+      } catch (apiError) {
+        console.error('Erro ao buscar dados reais da Câmara:', apiError);
+        // Fallback para dados do Supabase em caso de erro
+      }
     }
     
-    console.log('✅ Consulta de teste bem-sucedida:', testData);
+    // Busca padrão no Supabase
+    const offset = (parseInt(page) - 1) * parseInt(limit);
     
     let query = supabase
       .from('politicians')
-      .select('*', { count: 'exact' })
+      .select('*, expenses_visible', { count: 'exact' })
+      .eq('is_active', true)
+      .eq('is_approved', true)
       .order('name')
       .range(offset, offset + parseInt(limit) - 1);
 
@@ -50,18 +108,7 @@ router.get('/', async (req, res) => {
       query = query.or(`name.ilike.%${search}%,short_bio.ilike.%${search}%`);
     }
 
-    console.log('🔍 Executando consulta principal...');
     const { data: politicians, error, count: totalCount } = await query;
-
-    if (error) {
-      console.error('❌ Erro ao buscar políticos:', error);
-      return res.status(500).json({ 
-        error: 'Erro ao buscar políticos', 
-        details: error.message 
-      });
-    }
-
-    console.log('✅ Consulta bem-sucedida. Políticos encontrados:', politicians?.length || 0);
 
     // Calcular informações de paginação
     const totalPages = Math.ceil((totalCount || 0) / parseInt(limit));
@@ -75,7 +122,8 @@ router.get('/', async (req, res) => {
         pages: totalPages,
         limit: parseInt(limit),
         total: totalCount || 0
-      }
+      },
+      source: 'supabase'
     });
   } catch (error) {
     console.error('Erro na listagem de políticos:', error);
@@ -87,6 +135,63 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const { use_real_data } = req.query;
+    
+    // Se solicitado dados reais e o ID parece ser de deputado federal
+    if (use_real_data === 'true' && !isNaN(id) && id.length >= 5) {
+      try {
+        const externalAPIs = require('../services/externalAPIs');
+        const deputadoData = await externalAPIs.fetchDeputadoCompleteData(id);
+        
+        if (deputadoData) {
+          // Formatar dados para o frontend
+          const formattedDeputado = {
+            id: deputadoData.id,
+            external_id: deputadoData.id.toString(),
+            name: deputadoData.nome,
+            full_name: deputadoData.nome,
+            party: deputadoData.ultimoStatus?.siglaPartido,
+            state: deputadoData.ultimoStatus?.siglaUf,
+            position: 'deputado federal',
+            level: 'federal',
+            photo_url: deputadoData.ultimoStatus?.urlFoto,
+            email: deputadoData.ultimoStatus?.gabinete?.email,
+            phone: deputadoData.ultimoStatus?.gabinete?.telefone,
+            office: deputadoData.ultimoStatus?.gabinete?.nome,
+            cpf: deputadoData.cpf,
+            birth_date: deputadoData.dataDeNascimento,
+            birth_place: `${deputadoData.municipioDeNascimento}/${deputadoData.ufDeNascimento}`,
+            education: deputadoData.escolaridade,
+            gender: deputadoData.sexo,
+            social_networks: {
+              website: deputadoData.urlWebsite,
+              facebook: deputadoData.redeSocial?.find(r => r.includes('facebook')),
+              twitter: deputadoData.redeSocial?.find(r => r.includes('twitter')),
+              instagram: deputadoData.redeSocial?.find(r => r.includes('instagram'))
+            },
+            expenses: deputadoData.expenses || {
+              simulated: true,
+              total_year: Math.floor(Math.random() * 500000) + 100000,
+              categories: {
+                'Combustíveis e lubrificantes': Math.floor(Math.random() * 50000) + 10000,
+                'Manutenção de escritório de apoio': Math.floor(Math.random() * 30000) + 5000,
+                'Locação ou fretamento de veículos': Math.floor(Math.random() * 40000) + 8000
+              }
+            },
+            source: 'camara_oficial'
+          };
+          
+          return res.json({ 
+            success: true, 
+            data: formattedDeputado,
+            source: 'camara_oficial'
+          });
+        }
+      } catch (apiError) {
+        console.error('Erro ao buscar dados reais do deputado:', apiError);
+        // Fallback para dados do Supabase em caso de erro
+      }
+    }
 
     const { data: politician, error } = await supabase
       .from('politicians')
@@ -111,7 +216,8 @@ router.get('/:id', async (req, res) => {
 
     res.json({
       success: true,
-      data: politician
+      data: politician,
+      source: 'supabase'
     });
   } catch (error) {
     console.error('Erro ao buscar político:', error);
@@ -349,7 +455,7 @@ router.get('/:id/user-rating', authenticateUser, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { data: userRating } = await supabase
+    const { data: userRating, error } = await supabase
       .from('politician_ratings')
       .select('*')
       .eq('politician_id', id)
@@ -363,7 +469,7 @@ router.get('/:id/user-rating', authenticateUser, async (req, res) => {
 
     res.json({
       success: true,
-      data: rating || null
+      data: userRating || null
     });
   } catch (error) {
     console.error('Erro ao buscar avaliação do usuário:', error);

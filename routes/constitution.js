@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 
 const router = express.Router();
@@ -14,7 +14,7 @@ router.get('/download-status/:userId', authenticateUser, async (req, res) => {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('constitution_downloads')
       .select('*')
       .eq('user_id', userId)
@@ -46,7 +46,7 @@ router.post('/download/:userId', authenticateUser, async (req, res) => {
     }
 
     // Verificar se já baixou
-    const { data: existingDownload } = await supabase
+    const { data: existingDownload } = await adminSupabase
       .from('constitution_downloads')
       .select('id')
       .eq('user_id', userId)
@@ -57,7 +57,7 @@ router.post('/download/:userId', authenticateUser, async (req, res) => {
     }
 
     // Registrar o download
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('constitution_downloads')
       .insert({
         user_id: userId,
