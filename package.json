@@ -33,7 +33,7 @@
     "test": "echo 'No tests specified'"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
+    "@supabase/supabase-js": "^2.56.0",
     "axios": "^1.11.0",
     "bcryptjs": "3.0.2",
     "cheerio": "^1.1.2",
