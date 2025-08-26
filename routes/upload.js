@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const { authenticateUser, authenticateAdmin } = require('../middleware/auth');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const router = express.Router();
 
 // Configurar multer para armazenar arquivos em memória (para Vercel)
@@ -17,8 +17,8 @@ async function uploadToSupabase(file, folder = 'uploads') {
     const fileName = `${file.fieldname}-${uniqueSuffix}${extension}`;
     const filePath = `${folder}/${fileName}`;
 
-    // Upload para Supabase Storage
-    const { data, error } = await supabase.storage
+    // Upload para Supabase Storage usando admin client
+    const { data, error } = await adminSupabase.storage
       .from('images')
       .upload(filePath, file.buffer, {
         contentType: file.mimetype,
@@ -31,7 +31,7 @@ async function uploadToSupabase(file, folder = 'uploads') {
     }
 
     // Obter URL pública do arquivo
-    const { data: publicUrlData } = supabase.storage
+    const { data: publicUrlData } = adminSupabase.storage
       .from('images')
       .getPublicUrl(filePath);
 
