@@ -12,8 +12,8 @@ router.get('/users/:userId/status', async (req, res) => {
     const { userId } = req.params;
     
     // Verificar se o usuário pode acessar estes dados
-    // userId pode ser tanto auth_id quanto user.id, então verificar ambos
-    if (req.user.auth_id !== userId && req.user.id.toString() !== userId && req.user.role !== 'admin') {
+    // userId deve ser o ID da tabela users
+    if (req.user.id.toString() !== userId && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
@@ -46,8 +46,8 @@ router.post('/users/:userId/register', async (req, res) => {
     const { userId } = req.params;
     
     // Verificar se o usuário pode registrar este download
-    // userId pode ser tanto auth_id quanto user.id, então verificar ambos
-    if (req.user.auth_id !== userId && req.user.id.toString() !== userId) {
+    // userId deve ser o ID da tabela users
+    if (req.user.id.toString() !== userId) {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
