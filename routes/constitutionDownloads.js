@@ -12,7 +12,7 @@ router.get('/users/:userId/status', async (req, res) => {
     const { userId } = req.params;
     
     // Verificar se o usuário pode acessar estes dados
-    if (req.user.id !== userId && req.user.role !== 'admin') {
+    if (req.user.auth_id !== userId && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
@@ -20,7 +20,7 @@ router.get('/users/:userId/status', async (req, res) => {
     const { data: download, error } = await adminSupabase
       .from('constitution_downloads')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', req.user.id)
       .single();
 
     if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
@@ -45,7 +45,7 @@ router.post('/users/:userId/register', async (req, res) => {
     const { userId } = req.params;
     
     // Verificar se o usuário pode registrar este download
-    if (req.user.id !== userId) {
+    if (req.user.auth_id !== userId) {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
@@ -53,7 +53,7 @@ router.post('/users/:userId/register', async (req, res) => {
     const { data: existingDownload } = await adminSupabase
       .from('constitution_downloads')
       .select('id')
-      .eq('user_id', userId)
+      .eq('user_id', req.user.id)
       .single();
 
     if (existingDownload) {
@@ -67,7 +67,7 @@ router.post('/users/:userId/register', async (req, res) => {
     const { data: download, error: downloadError } = await adminSupabase
       .from('constitution_downloads')
       .insert({
-        user_id: userId,
+        user_id: req.user.id,
         points_awarded: 100
       })
       .select()
@@ -82,7 +82,7 @@ router.post('/users/:userId/register', async (req, res) => {
     const { error: pointsError } = await adminSupabase
       .from('points')
       .insert({
-        user_id: userId,
+        user_id: req.user.id,
         amount: 100,
         reason: 'Download da Constituição Federal',
         category: 'constitution_download',

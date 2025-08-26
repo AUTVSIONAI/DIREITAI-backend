@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
@@ -357,27 +357,37 @@ router.put('/:id', authenticateUser, async (req, res) => {
 
 // DELETE /api/blog/:id - Deletar post (requer autenticação)
 router.delete('/:id', authenticateUser, async (req, res) => {
+  console.log('🔍 DELETE route started - Post ID:', req.params.id);
   try {
     const { id } = req.params;
     const userId = req.user.id;
+    const userRole = req.user.role;
+
+    console.log('🔍 DELETE request - User ID:', userId, 'Role:', userRole, 'Post ID:', id);
 
     // Verificar se o usuário tem permissão (admin ou journalist)
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user) {
-      return res.status(403).json({ error: 'Usuário não encontrado' });
-    }
-
-    if (!['admin', 'journalist'].includes(user.role)) {
+    if (!['admin', 'journalist'].includes(userRole)) {
+      console.log('❌ Permissão negada - Role:', userRole);
       return res.status(403).json({ error: 'Permissão negada' });
     }
 
-    // Soft delete - marcar como não publicado
-    const { data: deletedPost, error } = await supabase
+    // Verificar se o post existe antes de tentar deletar
+    const { data: existingPost, error: checkError } = await supabase
+      .from('politician_posts')
+      .select('id, title, is_published')
+      .eq('id', id)
+      .single();
+
+    if (checkError || !existingPost) {
+      console.log('❌ Post não encontrado:', checkError);
+      return res.status(404).json({ error: 'Post não encontrado' });
+    }
+
+    console.log('✅ Post encontrado:', existingPost.title, 'Published:', existingPost.is_published);
+
+    // Soft delete - marcar como não publicado usando adminSupabase para contornar RLS
+    console.log('🔄 Tentando fazer UPDATE do post com adminSupabase...');
+    const { data: deletedPost, error } = await adminSupabase
       .from('politician_posts')
       .update({ 
         is_published: false,
@@ -387,11 +397,14 @@ router.delete('/:id', authenticateUser, async (req, res) => {
       .select()
       .single();
 
+    console.log('📊 Resultado do UPDATE com adminSupabase:', { data: deletedPost, error });
+
     if (error) {
       console.error('Erro ao deletar post:', error);
       return res.status(500).json({ error: 'Erro interno do servidor' });
     }
 
+    console.log('✅ Post deletado com sucesso:', deletedPost.title);
     res.json({ message: 'Post deletado com sucesso', post: deletedPost });
   } catch (error) {
     console.error('Erro ao deletar post:', error);
