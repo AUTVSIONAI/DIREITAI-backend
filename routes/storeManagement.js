@@ -554,6 +554,66 @@ router.get('/categories', authenticateUser, authenticateAdmin, async (req, res) 
   }
 });
 
+// Create category
+router.post('/categories', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Category name is required' });
+    }
+
+    const categoryName = name.trim().toLowerCase();
+
+    // Check if category already exists
+    const { data: existingProducts } = await supabase
+      .from('products')
+      .select('category')
+      .eq('category', categoryName)
+      .limit(1);
+
+    if (existingProducts && existingProducts.length > 0) {
+      return res.status(409).json({ error: 'Category already exists' });
+    }
+
+    // Create a placeholder product with the new category to establish it
+    // This is a workaround since categories are derived from products
+    const { data: product, error } = await supabase
+      .from('products')
+      .insert([
+        {
+          name: `_category_placeholder_${categoryName}`,
+          description: 'Placeholder product for category creation',
+          price: 0,
+          category: categoryName,
+          stock_quantity: 0,
+          active: false,
+          is_category_placeholder: true,
+          created_at: new Date().toISOString()
+        }
+      ])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating category:', error);
+      return res.status(400).json({ error: 'Failed to create category' });
+    }
+
+    res.status(201).json({ 
+      category: {
+        id: categoryName,
+        name: categoryName.charAt(0).toUpperCase() + categoryName.slice(1),
+        count: 0
+      },
+      message: 'Category created successfully' 
+    });
+  } catch (error) {
+    console.error('Error in create category:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Export endpoints (placeholder - would need actual implementation)
 router.get('/export/products', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
