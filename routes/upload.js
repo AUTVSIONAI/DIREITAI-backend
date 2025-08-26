@@ -75,7 +75,7 @@ router.post('/politician-photo', authenticateUser, authenticateAdmin, upload.sin
 });
 
 // Upload de imagem de produto
-router.post('/product-image', authenticateUser, authenticateAdmin, upload.single('image'), (req, res) => {
+router.post('/product-image', authenticateUser, upload.single('image'), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });

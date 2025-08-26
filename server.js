@@ -122,6 +122,8 @@ app.use('/api/fake-news', require('./routes/fakeNews'));
 app.use('/api/public', require('./routes/publicRegistration'));
 app.use('/api/constitution', require('./routes/constitution'));
 app.use('/api/constitution-downloads', require('./routes/constitutionDownloads'));
+app.use('/api/fix', require('./routes/fix-images'));
+app.use('/api/fix', require('./routes/fix-constitution'));
 
 // Root endpoint
 app.get('/', (req, res) => {

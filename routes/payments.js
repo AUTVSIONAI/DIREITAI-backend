@@ -128,8 +128,11 @@ router.post('/checkout', authenticateUser, async (req, res) => {
     console.log('Stripe session created:', session.id);
 
     res.json({ 
-      sessionId: session.id,
-      url: session.url 
+      success: true,
+      data: {
+        sessionId: session.id,
+        url: session.url
+      }
     });
   } catch (error) {
     console.error('Erro ao criar sessão de checkout:', error);
