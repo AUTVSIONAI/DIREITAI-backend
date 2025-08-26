@@ -5,6 +5,64 @@ const router = express.Router();
 // Flag para usar dados mock (temporário até a tabela ser criada)
 const USE_MOCK_DATA = false;
 
+// Dados mock para desenvolvimento
+const getMockPlans = () => [
+  {
+    id: 1,
+    name: 'Plano Básico',
+    slug: 'basico',
+    description: 'Plano ideal para uso pessoal',
+    price_monthly: 29.90,
+    price_yearly: 299.00,
+    features: ['Acesso básico à IA', 'Análise de fake news limitada'],
+    limits: {
+      ai_conversations: 50,
+      fake_news_analyses: 10
+    },
+    is_active: true,
+    is_visible: true,
+    sort_order: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 2,
+    name: 'Plano Premium',
+    slug: 'premium',
+    description: 'Plano completo para profissionais',
+    price_monthly: 59.90,
+    price_yearly: 599.00,
+    features: ['Acesso completo à IA', 'Análise ilimitada de fake news', 'Suporte prioritário'],
+    limits: {
+      ai_conversations: -1,
+      fake_news_analyses: -1
+    },
+    is_active: true,
+    is_visible: true,
+    sort_order: 2,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 3,
+    name: 'Plano Gratuito',
+    slug: 'gratuito',
+    description: 'Plano gratuito com funcionalidades limitadas',
+    price_monthly: 0,
+    price_yearly: 0,
+    features: ['Acesso limitado à IA'],
+    limits: {
+      ai_conversations: 5,
+      fake_news_analyses: 2
+    },
+    is_active: true,
+    is_visible: false,
+    sort_order: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+];
+
 // Middleware para verificar se é admin
 const requireAdmin = async (req, res, next) => {
   try {
@@ -48,7 +106,9 @@ router.get('/', async (req, res) => {
       .from('subscription_plans')
       .select('*')
       .eq('is_active', true)
-      .order('sort_order');
+      .eq('is_visible', true)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
 
     if (error) {
       console.error('Erro ao buscar planos:', error);
@@ -73,7 +133,8 @@ router.get('/admin', requireAdmin, async (req, res) => {
     const { data: plans, error } = await supabase
       .from('subscription_plans')
       .select('*')
-      .order('sort_order');
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
 
     if (error) {
       console.error('Erro ao buscar planos (admin):', error);
@@ -133,6 +194,7 @@ router.post('/', requireAdmin, async (req, res) => {
       limits,
       is_active = true,
       is_popular = false,
+      is_visible = true,
       sort_order = 0,
       color = 'blue',
       icon = 'Package'
@@ -159,6 +221,7 @@ router.post('/', requireAdmin, async (req, res) => {
         limits: limits || {},
         is_active,
         is_popular,
+        is_visible,
         sort_order: parseInt(sort_order) || 0,
         color,
         icon
@@ -182,6 +245,7 @@ router.post('/', requireAdmin, async (req, res) => {
         limits: limits || {},
         is_active,
         is_popular,
+        is_visible,
         sort_order: parseInt(sort_order) || 0,
         color,
         icon
@@ -220,6 +284,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       limits,
       is_active,
       is_popular,
+      is_visible,
       sort_order,
       color,
       icon
@@ -237,6 +302,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     if (limits !== undefined) updateData.limits = limits;
     if (is_active !== undefined) updateData.is_active = is_active;
     if (is_popular !== undefined) updateData.is_popular = is_popular;
+    if (is_visible !== undefined) updateData.is_visible = is_visible;
     if (sort_order !== undefined) updateData.sort_order = parseInt(sort_order);
     if (color !== undefined) updateData.color = color;
     if (icon !== undefined) updateData.icon = icon;
@@ -331,7 +397,23 @@ router.patch('/:id/toggle', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Buscar estado atual
+    if (USE_MOCK_DATA) {
+      const mockPlans = getMockPlans();
+      const planIndex = mockPlans.findIndex(p => p.id === parseInt(id));
+      
+      if (planIndex === -1) {
+        return res.status(404).json({ success: false, error: 'Plano não encontrado' });
+      }
+
+      mockPlans[planIndex].is_active = !mockPlans[planIndex].is_active;
+      return res.json({ 
+        success: true, 
+        data: mockPlans[planIndex],
+        message: `Plano ${mockPlans[planIndex].is_active ? 'ativado' : 'desativado'} com sucesso` 
+      });
+    }
+
+    // Buscar o plano atual
     const { data: currentPlan, error: fetchError } = await supabase
       .from('subscription_plans')
       .select('is_active')
@@ -342,25 +424,152 @@ router.patch('/:id/toggle', requireAdmin, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Plano não encontrado' });
     }
 
-    // Alternar estado
-    const { data: plan, error } = await supabase
+    // Alternar o status
+    const { data: updatedPlan, error } = await supabase
       .from('subscription_plans')
-      .update({ 
-        is_active: !currentPlan.is_active,
-        updated_at: new Date().toISOString()
-      })
+      .update({ is_active: !currentPlan.is_active })
       .eq('id', id)
       .select()
       .single();
 
     if (error) {
       console.error('Erro ao alternar status do plano:', error);
-      return res.status(500).json({ success: false, error: 'Erro ao alternar status' });
+      return res.status(500).json({ success: false, error: 'Erro ao alternar status do plano' });
     }
 
-    res.json({ success: true, data: plan });
+    res.json({ 
+      success: true, 
+      data: updatedPlan,
+      message: `Plano ${updatedPlan.is_active ? 'ativado' : 'desativado'} com sucesso` 
+    });
   } catch (error) {
     console.error('Erro ao alternar status do plano:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// PATCH /api/plans/:id/visibility - Alternar visibilidade do plano
+router.patch('/:id/visibility', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (USE_MOCK_DATA) {
+      const mockPlans = getMockPlans();
+      const planIndex = mockPlans.findIndex(p => p.id === parseInt(id));
+      
+      if (planIndex === -1) {
+        return res.status(404).json({ success: false, error: 'Plano não encontrado' });
+      }
+
+      mockPlans[planIndex].is_visible = !mockPlans[planIndex].is_visible;
+      return res.json({ 
+        success: true, 
+        data: mockPlans[planIndex],
+        message: `Plano ${mockPlans[planIndex].is_visible ? 'tornado visível' : 'ocultado'} com sucesso` 
+      });
+    }
+
+    // Buscar o plano atual
+    const { data: currentPlan, error: fetchError } = await supabase
+      .from('subscription_plans')
+      .select('is_visible')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !currentPlan) {
+      return res.status(404).json({ success: false, error: 'Plano não encontrado' });
+    }
+
+    // Alternar a visibilidade
+    const { data: updatedPlan, error } = await supabase
+      .from('subscription_plans')
+      .update({ is_visible: !currentPlan.is_visible })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Erro ao alternar visibilidade do plano:', error);
+      return res.status(500).json({ success: false, error: 'Erro ao alternar visibilidade do plano' });
+    }
+
+    res.json({ 
+      success: true, 
+      data: updatedPlan,
+      message: `Plano ${updatedPlan.is_visible ? 'tornado visível' : 'ocultado'} com sucesso` 
+    });
+  } catch (error) {
+    console.error('Erro ao alternar visibilidade do plano:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// PATCH /api/plans/:id/reorder - Reordenar plano
+router.patch('/:id/reorder', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { direction } = req.body; // 'up' ou 'down'
+
+    if (!direction || !['up', 'down'].includes(direction)) {
+      return res.status(400).json({ success: false, error: 'Direção inválida. Use "up" ou "down"' });
+    }
+
+    if (USE_MOCK_DATA) {
+      const mockPlans = getMockPlans();
+      const planIndex = mockPlans.findIndex(p => p.id === parseInt(id));
+      
+      if (planIndex === -1) {
+        return res.status(404).json({ success: false, error: 'Plano não encontrado' });
+      }
+
+      // Simular reordenação
+      const currentOrder = mockPlans[planIndex].sort_order || planIndex;
+      const newOrder = direction === 'up' ? currentOrder - 1 : currentOrder + 1;
+      mockPlans[planIndex].sort_order = Math.max(0, newOrder);
+      
+      return res.json({ 
+        success: true, 
+        data: mockPlans[planIndex],
+        message: 'Ordem do plano atualizada com sucesso' 
+      });
+    }
+
+    // Buscar o plano atual
+    const { data: currentPlan, error: fetchError } = await supabase
+      .from('subscription_plans')
+      .select('sort_order')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !currentPlan) {
+      return res.status(404).json({ success: false, error: 'Plano não encontrado' });
+    }
+
+    // Calcular nova ordem
+    const currentOrder = currentPlan.sort_order || 0;
+    const newOrder = direction === 'up' ? currentOrder - 1 : currentOrder + 1;
+    const finalOrder = Math.max(0, newOrder);
+
+    // Atualizar a ordem
+    const { data: updatedPlan, error } = await supabase
+      .from('subscription_plans')
+      .update({ sort_order: finalOrder })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Erro ao reordenar plano:', error);
+      return res.status(500).json({ success: false, error: 'Erro ao reordenar plano' });
+    }
+
+    res.json({ 
+      success: true, 
+      data: updatedPlan,
+      message: 'Ordem do plano atualizada com sucesso' 
+    });
+  } catch (error) {
+    console.error('Erro ao reordenar plano:', error);
     res.status(500).json({ success: false, error: 'Erro interno do servidor' });
   }
 });

@@ -770,32 +770,21 @@ router.get('/reports/financial', authenticateUser, authenticateAdmin, async (req
 // System settings
 router.get('/settings', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
-    // Mock system settings
-    const settings = {
-      general: {
-        siteName: 'DireitaAI',
-        maintenanceMode: false,
-        registrationEnabled: true,
-        maxUsersPerEvent: 500
-      },
-      ai: {
-        dailyLimitGratuito: 10,
-        dailyLimitEngajado: 50,
-        dailyLimitLider: 200,
-        dailyLimitSupremo: -1, // unlimited
-        creativeAIEnabled: true
-      },
-      points: {
-        checkinPoints: 10,
-        purchasePointsRatio: 0.1, // 1 point per R$ 10
-        referralPoints: 50
-      },
-      store: {
-        freeShippingThreshold: 100,
-        shippingCost: 15,
-        taxRate: 0.08
-      }
-    };
+    // Buscar configurações do banco de dados
+    const { data: settingsData, error } = await supabase
+      .from('system_settings')
+      .select('key, value');
+
+    if (error) {
+      console.error('Database error:', error);
+      return res.status(500).json({ error: 'Failed to fetch settings' });
+    }
+
+    // Converter array de configurações em objeto
+    const settings = {};
+    settingsData.forEach(setting => {
+      settings[setting.key] = setting.value;
+    });
 
     res.json({ settings });
   } catch (error) {
@@ -809,15 +798,28 @@ router.put('/settings', authenticateUser, authenticateAdmin, async (req, res) =>
   try {
     const { settings } = req.body;
 
-    // In a real implementation, you would save these to a settings table
-    // For now, we'll just return success
+    // Atualizar cada configuração no banco de dados
+    const updatePromises = Object.entries(settings).map(async ([key, value]) => {
+      const { error } = await supabase
+        .from('system_settings')
+        .update({ value })
+        .eq('key', key);
+      
+      if (error) {
+        console.error(`Error updating ${key}:`, error);
+        throw error;
+      }
+    });
+
+    await Promise.all(updatePromises);
+
     res.json({ 
       settings, 
       message: 'Settings updated successfully' 
     });
   } catch (error) {
     console.error('Update settings error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Failed to update settings' });
   }
 });
 
