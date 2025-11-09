@@ -87,16 +87,23 @@ const PLANS = {
 // Endpoint para criar sessão de checkout
 router.post('/checkout', authenticateUser, async (req, res) => {
   try {
-    const { planId } = req.body;
+    const { planId, successUrl: successUrlFromBody, cancelUrl: cancelUrlFromBody, affiliate_code } = req.body;
     const userId = req.user.id;
 
-    console.log('Checkout request:', { planId, userId });
+    console.log('Checkout request:', { planId, userId, successUrlFromBody, cancelUrlFromBody, affiliate_code });
 
     if (!planId || !PLANS[planId]) {
       return res.status(400).json({ error: 'Plano inválido' });
     }
 
     const plan = PLANS[planId];
+
+    // Determinar URLs de sucesso/cancelamento com fallback seguro
+    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5121';
+    const successUrl = successUrlFromBody || `${frontendUrl}/admin/payment-success?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = cancelUrlFromBody || `${frontendUrl}/admin/plans`;
+
+    console.log('Stripe checkout URLs:', { successUrl, cancelUrl, frontendUrl });
 
     // Criar sessão de checkout do Stripe
     const session = await stripe.checkout.sessions.create({
@@ -116,12 +123,14 @@ router.post('/checkout', authenticateUser, async (req, res) => {
         quantity: 1
       }],
       mode: 'subscription',
-      success_url: `${process.env.FRONTEND_URL}/dashboard/plan?success=true&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/dashboard/plan?canceled=true`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
       client_reference_id: userId,
+      customer_email: req.user?.email,
       metadata: {
         userId: userId,
-        planId: planId
+        planId: planId,
+        affiliateCode: affiliate_code || undefined
       }
     });
 
