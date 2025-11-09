@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
@@ -631,7 +631,7 @@ router.delete('/:id/ratings', authenticateUser, async (req, res) => {
 // Função auxiliar para atualizar estatísticas do político
 async function updatePoliticianStats(politicianId) {
   try {
-    const { data: ratings, error } = await supabase
+    const { data: ratings, error } = await adminSupabase
       .from('politician_ratings')
       .select('rating')
       .eq('politician_id', politicianId);
@@ -649,7 +649,7 @@ async function updatePoliticianStats(politicianId) {
     // Calcular pontuação de popularidade (baseada em número de votos e média)
     const popularityScore = Math.round((averageRating * totalVotes) / 5 * 100);
 
-    await supabase
+    await adminSupabase
       .from('politicians')
       .update({
         total_votes: totalVotes,
@@ -771,6 +771,18 @@ router.get('/positions', async (req, res) => {
   } catch (error) {
     console.error('Erro na busca de posições:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Recalcular estatísticas do político (admin ou manutenção)
+router.post('/:id/recalc-stats', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await updatePoliticianStats(id);
+    return res.json({ success: true, message: 'Estatísticas recalculadas com sucesso', politician_id: id });
+  } catch (error) {
+    console.error('Erro ao recalcular estatísticas do político:', error);
+    return res.status(500).json({ error: 'Erro ao recalcular estatísticas do político' });
   }
 });
 

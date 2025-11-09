@@ -408,16 +408,31 @@ async function getUserConversations(userId, limit = 50) {
       };
     }
 
-    // Transformar os dados para o formato esperado pelo frontend
-    const formattedConversations = conversations?.map(conv => ({
-      id: conv.id,
-      conversation_id: conv.conversation_id,
-      title: conv.message?.substring(0, 50) + '...' || 'Conversa sem título',
-      created_at: conv.created_at,
-      updated_at: conv.created_at,
-      message_count: 2, // Sempre 2 (pergunta + resposta)
-      last_message_preview: conv.response?.substring(0, 100) || ''
-    })) || [];
+    // Agrupar por conversation_id e criar resumo de cada conversa
+    const conversationGroups = {};
+    conversations?.forEach(conv => {
+      const convId = conv.conversation_id;
+      if (!conversationGroups[convId]) {
+        conversationGroups[convId] = {
+          id: convId,
+          conversation_id: convId,
+          title: conv.message?.substring(0, 50) + '...' || 'Conversa sem título',
+          created_at: conv.created_at,
+          updated_at: conv.created_at,
+          message_count: 0,
+          last_message_preview: '',
+          archived: false
+        };
+      }
+      conversationGroups[convId].message_count += 2; // pergunta + resposta
+      conversationGroups[convId].last_message_preview = conv.response?.substring(0, 100) || '';
+      // Atualizar com a data mais recente
+      if (new Date(conv.created_at) > new Date(conversationGroups[convId].updated_at)) {
+        conversationGroups[convId].updated_at = conv.created_at;
+      }
+    });
+
+    const formattedConversations = Object.values(conversationGroups);
 
     return {
       success: true,
@@ -425,6 +440,192 @@ async function getUserConversations(userId, limit = 50) {
     };
   } catch (error) {
     console.error('Error in getUserConversations:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Buscar conversa específica
+async function getConversation(userId, conversationId) {
+  try {
+    const { data: conversations, error } = await adminSupabase
+      .from('ai_conversations')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching conversation:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+
+    if (!conversations || conversations.length === 0) {
+      return {
+        success: false,
+        error: 'Conversation not found'
+      };
+    }
+
+    // Formatar conversa com metadados
+    const firstMessage = conversations[0];
+    const conversation = {
+      id: conversationId,
+      conversation_id: conversationId,
+      title: firstMessage.message?.substring(0, 50) + '...' || 'Conversa sem título',
+      created_at: firstMessage.created_at,
+      updated_at: conversations[conversations.length - 1].created_at,
+      message_count: conversations.length * 2,
+      archived: false
+    };
+
+    return {
+      success: true,
+      data: conversation
+    };
+  } catch (error) {
+    console.error('Error in getConversation:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Criar nova conversa
+async function createConversation(userId, title = null) {
+  try {
+    const conversationId = require('crypto').randomUUID();
+    const now = new Date().toISOString();
+
+    const conversation = {
+      id: conversationId,
+      conversation_id: conversationId,
+      title: title || 'Nova Conversa',
+      created_at: now,
+      updated_at: now,
+      message_count: 0,
+      archived: false
+    };
+
+    return {
+      success: true,
+      data: conversation
+    };
+  } catch (error) {
+    console.error('Error in createConversation:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Atualizar conversa
+async function updateConversation(userId, conversationId, updates) {
+  try {
+    // Para esta implementação simples, apenas retornamos sucesso
+    // Em uma implementação completa, você salvaria os metadados em uma tabela separada
+    console.log(`Updating conversation ${conversationId} for user ${userId}:`, updates);
+
+    return {
+      success: true,
+      data: {
+        id: conversationId,
+        conversation_id: conversationId,
+        ...updates,
+        updated_at: new Date().toISOString()
+      }
+    };
+  } catch (error) {
+    console.error('Error in updateConversation:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Deletar conversa
+async function deleteConversation(userId, conversationId) {
+  try {
+    const { error } = await adminSupabase
+      .from('ai_conversations')
+      .delete()
+      .eq('user_id', userId)
+      .eq('conversation_id', conversationId);
+
+    if (error) {
+      console.error('Error deleting conversation:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+
+    return {
+      success: true
+    };
+  } catch (error) {
+    console.error('Error in deleteConversation:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Buscar mensagens de uma conversa
+async function getConversationMessages(userId, conversationId) {
+  try {
+    const { data: conversations, error } = await adminSupabase
+      .from('ai_conversations')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching conversation messages:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // Transformar em formato de mensagens
+    const messages = [];
+    conversations?.forEach(conv => {
+      // Mensagem do usuário
+      messages.push({
+        id: `${conv.id}_user`,
+        type: 'user',
+        content: conv.message,
+        timestamp: conv.created_at
+      });
+      // Resposta da IA
+      messages.push({
+        id: `${conv.id}_ai`,
+        type: 'bot',
+        content: conv.response,
+        timestamp: conv.created_at,
+        model: conv.model_used,
+        provider: conv.provider_used,
+        tokens_used: conv.tokens_used
+      });
+    });
+
+    return {
+      success: true,
+      data: messages
+    };
+  } catch (error) {
+    console.error('Error in getConversationMessages:', error);
     return {
       success: false,
       error: error.message
@@ -698,6 +899,11 @@ module.exports = {
   generateResponse,
   saveConversation,
   getUserConversations,
+  getConversation,
+  createConversation,
+  updateConversation,
+  deleteConversation,
+  getConversationMessages,
   smartDispatcher,
   analyzeFakeNews,
   generateCreativeContent

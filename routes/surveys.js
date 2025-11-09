@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser, optionalAuthenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
@@ -344,8 +344,8 @@ router.post('/:id/vote', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'Opção de voto é obrigatória' });
     }
 
-    // Buscar a pesquisa
-    const { data: pesquisa, error: pesquisaError } = await supabase
+    // Buscar a pesquisa (usar adminSupabase para evitar falhas de RLS)
+    const { data: pesquisa, error: pesquisaError } = await adminSupabase
       .from('pesquisas')
       .select('*')
       .eq('id', id)
@@ -368,7 +368,7 @@ router.post('/:id/vote', authenticateUser, async (req, res) => {
     }
 
     // Verificar se o usuário já votou
-    const { data: votoExistente, error: votoError } = await supabase
+    const { data: votoExistente, error: votoError } = await adminSupabase
       .from('votos')
       .select('*')
       .eq('pesquisa_id', id)
@@ -386,7 +386,7 @@ router.post('/:id/vote', authenticateUser, async (req, res) => {
 
     // Para pesquisas de múltipla escolha, verificar limite de votos
     if (pesquisa.tipo === 'multipla') {
-      const { data: votosUsuario, error: votosUsuarioError } = await supabase
+      const { data: votosUsuario, error: votosUsuarioError } = await adminSupabase
         .from('votos')
         .select('*')
         .eq('pesquisa_id', id)
@@ -397,14 +397,14 @@ router.post('/:id/vote', authenticateUser, async (req, res) => {
         return res.status(500).json({ error: 'Erro interno do servidor' });
       }
 
-      if (votosUsuario.length >= pesquisa.max_votes_per_user) {
+      if ((votosUsuario || []).length >= (pesquisa.max_votes_per_user || 1)) {
         return res.status(409).json({ 
           error: `Você já atingiu o limite de ${pesquisa.max_votes_per_user} votos nesta pesquisa` 
         });
       }
     } else {
       // Para pesquisas simples, verificar se já votou em qualquer opção
-      const { data: qualquerVoto, error: qualquerVotoError } = await supabase
+      const { data: qualquerVoto, error: qualquerVotoError } = await adminSupabase
         .from('votos')
         .select('*')
         .eq('pesquisa_id', id)
@@ -429,19 +429,41 @@ router.post('/:id/vote', authenticateUser, async (req, res) => {
       }
     }
 
-    // Registrar o voto
-    const { data: novoVoto, error: novoVotoError } = await supabase
+    // Registrar o voto (usar adminSupabase e fazer fallback se colunas extras não existirem)
+    const insertPayload = {
+      pesquisa_id: id,
+      usuario_id: userId,
+      opcao_id: opcao_id,
+      comentario: comentario || null,
+      user_ip: userIp,
+      user_agent: userAgent
+    };
+
+    let insertResult = await adminSupabase
       .from('votos')
-      .insert({
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    let novoVoto = insertResult.data;
+    let novoVotoError = insertResult.error;
+
+    if (novoVotoError && (novoVotoError.code === '42703' || (novoVotoError.message || '').toLowerCase().includes('column'))) {
+      console.warn('⚠️ Coluna ausente em votos, tentando inserir sem user_ip/user_agent');
+      const fallbackPayload = {
         pesquisa_id: id,
         usuario_id: userId,
         opcao_id: opcao_id,
-        comentario: comentario || null,
-        user_ip: userIp,
-        user_agent: userAgent
-      })
-      .select()
-      .single();
+        comentario: comentario || null
+      };
+      const fallback = await adminSupabase
+        .from('votos')
+        .insert(fallbackPayload)
+        .select()
+        .single();
+      novoVoto = fallback.data;
+      novoVotoError = fallback.error;
+    }
 
     if (novoVotoError) {
       console.error('Erro ao registrar voto:', novoVotoError);
@@ -497,46 +519,118 @@ router.post('/', authenticateUser, async (req, res) => {
       });
     }
 
-    // Validar formato das opções
-    const opcoesFormatadas = opcoes.map((opcao, index) => ({
-      id: index + 1,
-      texto: typeof opcao === 'string' ? opcao : opcao.texto
-    }));
+    // Normalizar e validar opções (aceita string ou objeto { texto })
+    const textosValidos = (opcoes || [])
+      .map(opcao => (typeof opcao === 'string' ? opcao : opcao?.texto || ''))
+      .map(t => t.trim())
+      .filter(t => t.length > 0);
 
-    // Validar data de expiração
+    if (textosValidos.length < 2) {
+      return res.status(400).json({ 
+        error: 'Título e pelo menos 2 opções válidas são obrigatórios' 
+      });
+    }
+    if (textosValidos.length > 10) {
+      return res.status(400).json({ 
+        error: 'Máximo de 10 opções permitidas' 
+      });
+    }
+
+    const opcoesFormatadas = textosValidos.map((texto, index) => ({ id: index + 1, texto }));
+
+    // Normalizar expiração (aceita expiracao ISO ou data_expiracao YYYY-MM-DD)
     let dataExpiracao = null;
-    if (data_expiracao) {
-      dataExpiracao = new Date(data_expiracao);
-      if (dataExpiracao <= new Date()) {
-        return res.status(400).json({ 
-          error: 'Data de expiração deve ser no futuro' 
-        });
+    if (req.body.expiracao && typeof req.body.expiracao === 'string') {
+      const parsedISO = new Date(req.body.expiracao);
+      if (!isNaN(parsedISO.getTime())) dataExpiracao = parsedISO;
+    } else if (data_expiracao && typeof data_expiracao === 'string') {
+      const parsedDate = new Date(`${data_expiracao}T23:59:59Z`);
+      if (!isNaN(parsedDate.getTime())) dataExpiracao = parsedDate;
+    }
+
+    if (dataExpiracao && dataExpiracao <= new Date()) {
+      return res.status(400).json({ 
+        error: 'Data de expiração deve ser no futuro' 
+      });
+    }
+
+    // Validar politician_id se fornecido
+    let politicianIdFinal = null;
+    if (politician_id) {
+      try {
+        const { data: politico, error: politicoError } = await adminSupabase
+          .from('politicians')
+          .select('id')
+          .eq('id', politician_id)
+          .single();
+        if (politicoError || !politico) {
+          console.warn('⚠️ politician_id inválido ou não encontrado, usando null:', politician_id);
+          politicianIdFinal = null;
+        } else {
+          politicianIdFinal = politico.id;
+        }
+      } catch (e) {
+        console.warn('⚠️ Erro ao validar politician_id, usando null:', e?.message || e);
+        politicianIdFinal = null;
       }
     }
 
-    // Criar pesquisa
-    const { data: novaPesquisa, error } = await supabase
+    // Criar pesquisa (usar chave de serviço para evitar falhas de RLS)
+    const insertPayload = {
+      titulo,
+      descricao,
+      opcoes: opcoesFormatadas,
+      tipo,
+      publico_alvo,
+      regiao_especifica,
+      politician_id: politicianIdFinal,
+      data_expiracao: dataExpiracao ? dataExpiracao.toISOString() : null,
+      is_anonymous,
+      allow_comments,
+      is_active: true,
+      max_votes_per_user: tipo === 'multipla' ? max_votes_per_user : 1
+    };
+
+    console.log('🔍 Payload de criação de pesquisa:', {
+      ...insertPayload,
+      autor_id: req.user.id
+    });
+
+    let { data: novaPesquisa, error } = await adminSupabase
       .from('pesquisas')
       .insert({
-        titulo,
-        descricao,
-        opcoes: opcoesFormatadas,
-        tipo,
-        publico_alvo,
-        regiao_especifica,
-        politician_id: politician_id || null,
-        autor_id: req.user.id,
-        data_expiracao: dataExpiracao,
-        is_anonymous,
-        allow_comments,
-        max_votes_per_user: tipo === 'multipla' ? max_votes_per_user : 1
+        ...insertPayload,
+        autor_id: req.user.id
       })
       .select()
       .single();
 
+    if (error && (error.code === '42703' || (error.message || '').includes('autor_id'))) {
+      console.warn('⚠️ Coluna autor_id ausente, tentando com created_by');
+      const { data: novaPesquisa2, error: error2 } = await adminSupabase
+        .from('pesquisas')
+        .insert({
+          ...insertPayload,
+          created_by: req.user.id
+        })
+        .select()
+        .single();
+
+      if (error2) {
+        console.error('Erro ao criar pesquisa (fallback created_by):', error2);
+        return res.status(500).json({ error: 'Erro ao criar pesquisa', code: error2.code, details: error2.message || error2 });
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'Pesquisa criada com sucesso',
+        data: novaPesquisa2
+      });
+    }
+
     if (error) {
       console.error('Erro ao criar pesquisa:', error);
-      return res.status(500).json({ error: 'Erro ao criar pesquisa' });
+      return res.status(500).json({ error: 'Erro ao criar pesquisa', code: error.code, details: error.message || error });
     }
 
     res.status(201).json({
@@ -626,7 +720,7 @@ router.put('/:id', authenticateUser, async (req, res) => {
     }
 
     // Atualizar pesquisa
-    const { data: pesquisaAtualizada, error: updateError } = await supabase
+    const { data: pesquisaAtualizada, error: updateError } = await adminSupabase
       .from('pesquisas')
       .update(dadosAtualizacao)
       .eq('id', id)
@@ -671,7 +765,7 @@ router.delete('/:id', authenticateUser, async (req, res) => {
     }
 
     // Deletar pesquisa (cascade irá deletar votos e comentários relacionados)
-    const { error: deleteError } = await supabase
+    const { error: deleteError } = await adminSupabase
       .from('pesquisas')
       .delete()
       .eq('id', id);

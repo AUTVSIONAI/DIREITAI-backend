@@ -1604,3 +1604,36 @@ router.get('/analytics', authenticateUser, authenticateAdmin, async (req, res) =
 });
 
 module.exports = router;
+// Listar posts do blog (admin) incluindo rascunhos
+router.get('/blog', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { status, search, limit = 50, offset = 0 } = req.query;
+
+    let query = adminSupabase
+      .from('politician_posts')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+
+    if (status === 'published') {
+      query = query.eq('is_published', true);
+    } else if (status === 'draft') {
+      query = query.eq('is_published', false);
+    }
+
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,content.ilike.%${search}%`);
+    }
+
+    const { data: posts, error } = await query;
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({ data: posts || [], total: posts?.length || 0 });
+  } catch (error) {
+    console.error('Get admin blog posts error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});

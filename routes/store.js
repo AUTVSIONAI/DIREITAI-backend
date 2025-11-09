@@ -85,6 +85,8 @@ router.post('/cart', authenticateUser, async (req, res) => {
     const { product_id, quantity = 1 } = req.body;
     const userId = req.user.id;
 
+    console.log('🛒 Adding to cart - User ID:', userId, 'Product ID:', product_id, 'Quantity:', quantity);
+
     if (!product_id) {
       return res.status(400).json({ error: 'Product ID is required' });
     }
@@ -102,12 +104,15 @@ router.post('/cart', authenticateUser, async (req, res) => {
     }
 
     // Check stock
-    if (product.stock < quantity) {
+    if (product.stock_quantity < quantity) {
       return res.status(400).json({ error: 'Insufficient stock' });
     }
 
+    // Use adminSupabase to bypass RLS temporarily
+    const { adminSupabase } = require('../config/supabase');
+
     // Check if item already in cart
-    const { data: existingItem } = await supabase
+    const { data: existingItem } = await adminSupabase
       .from('cart_items')
       .select('*')
       .eq('user_id', userId)
@@ -117,11 +122,11 @@ router.post('/cart', authenticateUser, async (req, res) => {
     if (existingItem) {
       // Update quantity
       const newQuantity = existingItem.quantity + quantity;
-      if (newQuantity > product.stock) {
+      if (newQuantity > product.stock_quantity) {
         return res.status(400).json({ error: 'Insufficient stock' });
       }
 
-      const { data: updatedItem, error: updateError } = await supabase
+      const { data: updatedItem, error: updateError } = await adminSupabase
         .from('cart_items')
         .update({ quantity: newQuantity })
         .eq('id', existingItem.id)
@@ -129,13 +134,15 @@ router.post('/cart', authenticateUser, async (req, res) => {
         .single();
 
       if (updateError) {
+        console.error('🛒 Update cart error:', updateError);
         return res.status(400).json({ error: updateError.message });
       }
 
+      console.log('🛒 Cart item updated successfully');
       res.json({ cart_item: updatedItem });
     } else {
       // Add new item
-      const { data: cartItem, error: cartError } = await supabase
+      const { data: cartItem, error: cartError } = await adminSupabase
         .from('cart_items')
         .insert([
           {
@@ -149,9 +156,11 @@ router.post('/cart', authenticateUser, async (req, res) => {
         .single();
 
       if (cartError) {
+        console.error('🛒 Insert cart error:', cartError);
         return res.status(400).json({ error: cartError.message });
       }
 
+      console.log('🛒 Cart item added successfully');
       res.status(201).json({ cart_item: cartItem });
     }
   } catch (error) {
@@ -174,13 +183,14 @@ router.get('/cart', authenticateUser, async (req, res) => {
           name,
           description,
           price,
-          image_url,
+          image,
+          images,
           category,
-          stock
+          stock_quantity
         )
       `)
       .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+      .order('added_at', { ascending: false });
 
     if (error) {
       return res.status(400).json({ error: error.message });
@@ -229,7 +239,7 @@ router.put('/cart/:itemId', authenticateUser, async (req, res) => {
       .select(`
         *,
         products (
-          stock
+          stock_quantity
         )
       `)
       .eq('id', itemId)
@@ -241,7 +251,7 @@ router.put('/cart/:itemId', authenticateUser, async (req, res) => {
     }
 
     // Check stock
-    if (quantity > cartItem.products.stock) {
+    if (quantity > cartItem.products.stock_quantity) {
       return res.status(400).json({ error: 'Insufficient stock' });
     }
 
@@ -313,33 +323,75 @@ router.post('/checkout', authenticateUser, async (req, res) => {
   try {
     const userId = req.user.id;
     const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    const { items: frontendItems } = req.body;
 
-    console.log('🛒 Getting cart items for user:', userId);
+    console.log('🛒 Checkout request for user:', userId);
+    console.log('🛒 Frontend items:', frontendItems);
     
-    // Get cart items
-    const { data: cartItems, error: cartError } = await supabase
-      .from('cart_items')
-      .select(`
-        *,
-        products (
-          id,
-          name,
-          price,
-          stock_quantity,
-          image,
-          images
-        )
-      `)
-      .eq('user_id', userId);
+    let cartItems = [];
+    
+    // If frontend sends items directly, use them (for local cart)
+    if (frontendItems && frontendItems.length > 0) {
+      console.log('🛒 Using frontend cart items');
       
-    console.log('🛒 Cart items result:', { cartItems, cartError });
-
-    if (cartError) {
-      console.error('❌ Cart error:', cartError);
-      return res.status(400).json({ 
-        success: false,
-        error: 'Erro ao buscar carrinho: ' + cartError.message 
+      // Get product details from database for validation
+      const productIds = frontendItems.map(item => item.id);
+      const { data: products, error: productsError } = await supabase
+        .from('products')
+        .select('*')
+        .in('id', productIds);
+        
+      if (productsError) {
+        console.error('❌ Products error:', productsError);
+        return res.status(400).json({ 
+          success: false,
+          error: 'Erro ao buscar produtos: ' + productsError.message 
+        });
+      }
+      
+      // Map frontend items with product details
+      cartItems = frontendItems.map(item => {
+        const product = products.find(p => p.id === item.id);
+        if (!product) {
+          throw new Error(`Produto não encontrado: ${item.id}`);
+        }
+        return {
+          product_id: item.id,
+          quantity: item.quantity,
+          price: item.price || product.price,
+          products: product
+        };
       });
+    } else {
+      // Fallback: Get cart items from database
+      console.log('🛒 Getting cart items from database for user:', userId);
+      
+      const { data: dbCartItems, error: cartError } = await supabase
+        .from('cart_items')
+        .select(`
+          *,
+          products (
+            id,
+            name,
+            price,
+            stock_quantity,
+            image,
+            images
+          )
+        `)
+        .eq('user_id', userId);
+        
+      console.log('🛒 Cart items result:', { dbCartItems, cartError });
+
+      if (cartError) {
+        console.error('❌ Cart error:', cartError);
+        return res.status(400).json({ 
+          success: false,
+          error: 'Erro ao buscar carrinho: ' + cartError.message 
+        });
+      }
+      
+      cartItems = dbCartItems || [];
     }
     
     if (!cartItems || cartItems.length === 0) {

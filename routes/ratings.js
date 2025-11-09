@@ -326,7 +326,8 @@ router.get('/stats/:politician_id', async (req, res) => {
 // Função auxiliar para atualizar estatísticas do político
 async function updatePoliticianStats(politicianId) {
   try {
-    const { data: ratings, error } = await supabase
+    const { adminSupabase } = require('../config/supabase');
+    const { data: ratings, error } = await adminSupabase
       .from('politician_ratings')
       .select('rating')
       .eq('politician_id', politicianId);
@@ -341,13 +342,17 @@ async function updatePoliticianStats(politicianId) {
       ? ratings.reduce((sum, r) => sum + r.rating, 0) / totalVotes 
       : 0;
 
-    await supabase
+    const { error: updateError } = await adminSupabase
       .from('politicians')
       .update({
         total_votes: totalVotes,
         average_rating: Math.round(averageRating * 100) / 100
       })
       .eq('id', politicianId);
+
+    if (updateError) {
+      console.error('Erro ao atualizar estatísticas do político:', updateError);
+    }
   } catch (error) {
     console.error('Erro ao atualizar estatísticas do político:', error);
   }

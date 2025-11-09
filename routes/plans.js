@@ -106,7 +106,6 @@ router.get('/', async (req, res) => {
       .from('subscription_plans')
       .select('*')
       .eq('is_active', true)
-      .eq('is_visible', true)
       .order('sort_order', { ascending: true })
       .order('created_at', { ascending: true });
 
@@ -221,7 +220,7 @@ router.post('/', requireAdmin, async (req, res) => {
         limits: limits || {},
         is_active,
         is_popular,
-        is_visible,
+
         sort_order: parseInt(sort_order) || 0,
         color,
         icon
@@ -245,7 +244,7 @@ router.post('/', requireAdmin, async (req, res) => {
         limits: limits || {},
         is_active,
         is_popular,
-        is_visible,
+
         sort_order: parseInt(sort_order) || 0,
         color,
         icon
@@ -302,7 +301,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     if (limits !== undefined) updateData.limits = limits;
     if (is_active !== undefined) updateData.is_active = is_active;
     if (is_popular !== undefined) updateData.is_popular = is_popular;
-    if (is_visible !== undefined) updateData.is_visible = is_visible;
+
     if (sort_order !== undefined) updateData.sort_order = parseInt(sort_order);
     if (color !== undefined) updateData.color = color;
     if (icon !== undefined) updateData.icon = icon;
@@ -448,61 +447,16 @@ router.patch('/:id/toggle', requireAdmin, async (req, res) => {
   }
 });
 
-// PATCH /api/plans/:id/visibility - Alternar visibilidade do plano
+// PATCH /api/plans/:id/visibility - Alternar visibilidade do plano (funcionalidade removida - coluna não existe)
+// Esta rota foi desabilitada pois a coluna is_visible não existe na tabela subscription_plans
+/*
 router.patch('/:id/visibility', requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (USE_MOCK_DATA) {
-      const mockPlans = getMockPlans();
-      const planIndex = mockPlans.findIndex(p => p.id === parseInt(id));
-      
-      if (planIndex === -1) {
-        return res.status(404).json({ success: false, error: 'Plano não encontrado' });
-      }
-
-      mockPlans[planIndex].is_visible = !mockPlans[planIndex].is_visible;
-      return res.json({ 
-        success: true, 
-        data: mockPlans[planIndex],
-        message: `Plano ${mockPlans[planIndex].is_visible ? 'tornado visível' : 'ocultado'} com sucesso` 
-      });
-    }
-
-    // Buscar o plano atual
-    const { data: currentPlan, error: fetchError } = await supabase
-      .from('subscription_plans')
-      .select('is_visible')
-      .eq('id', id)
-      .single();
-
-    if (fetchError || !currentPlan) {
-      return res.status(404).json({ success: false, error: 'Plano não encontrado' });
-    }
-
-    // Alternar a visibilidade
-    const { data: updatedPlan, error } = await supabase
-      .from('subscription_plans')
-      .update({ is_visible: !currentPlan.is_visible })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Erro ao alternar visibilidade do plano:', error);
-      return res.status(500).json({ success: false, error: 'Erro ao alternar visibilidade do plano' });
-    }
-
-    res.json({ 
-      success: true, 
-      data: updatedPlan,
-      message: `Plano ${updatedPlan.is_visible ? 'tornado visível' : 'ocultado'} com sucesso` 
-    });
-  } catch (error) {
-    console.error('Erro ao alternar visibilidade do plano:', error);
-    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
-  }
+  res.status(501).json({ 
+    success: false, 
+    error: 'Funcionalidade de visibilidade não implementada - coluna is_visible não existe na tabela' 
+  });
 });
+*/
 
 // PATCH /api/plans/:id/reorder - Reordenar plano
 router.patch('/:id/reorder', requireAdmin, async (req, res) => {

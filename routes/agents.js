@@ -155,21 +155,27 @@ router.post('/', authenticateUser, async (req, res) => {
   }
 });
 
-// Atualizar agente (apenas admin)
+// Atualizar agente (admin tem acesso total; usuários podem editar prompt/voz/config)
 router.put('/:id', authenticateUser, async (req, res) => {
   try {
-    // Verificar se é admin usando o role já definido no middleware
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem editar agentes.' });
-    }
-
     const { id } = req.params;
-    const updateData = req.body;
+    const incoming = req.body || {};
 
-    // Remover campos que não devem ser atualizados diretamente
-    delete updateData.id;
-    delete updateData.created_at;
-    delete updateData.updated_at;
+    const isAdmin = req.user && req.user.role === 'admin';
+    const allowedUserFields = ['trained_prompt', 'voice_id', 'personality_config'];
+
+    // Construir updateData com base no perfil do usuário
+    const updateData = {};
+    Object.keys(incoming).forEach((key) => {
+      if (key === 'id' || key === 'created_at' || key === 'updated_at') return;
+      if (isAdmin || allowedUserFields.includes(key)) {
+        updateData[key] = incoming[key];
+      }
+    });
+
+    if (!isAdmin && Object.keys(updateData).length === 0) {
+      return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem editar este recurso.' });
+    }
 
     const { data: agent, error } = await supabase
       .from('politician_agents')
@@ -270,15 +276,8 @@ router.post('/:id/chat', authenticateUser, async (req, res) => {
       return res.status(404).json({ error: 'Agente não encontrado ou inativo' });
     }
 
-    // Gerar resposta do agente usando OpenRouter API
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    let response;
-
-    if (!openRouterKey) {
-      response = `Como ${agent.politicians.name}, ${agent.politicians.position} ${agent.politicians.state ? `de ${agent.politicians.state}` : ''}, posso dizer que: Esta é uma resposta simulada. A API de IA não está configurada no momento.`;
-    } else {
-      try {
-        const systemPrompt = `Você é ${agent.politicians.name}, ${agent.politicians.position} ${agent.politicians.state ? `de ${agent.politicians.state}` : ''} do partido ${agent.politicians.party}.
+    // Preferir prompt treinado (customizado) quando existir
+    const basePrompt = `Você é ${agent.politicians.name}, ${agent.politicians.position} ${agent.politicians.state ? `de ${agent.politicians.state}` : ''} do partido ${agent.politicians.party}.
 
 Suas características:
 - Posição política: ${agent.politicians.position}
@@ -288,9 +287,21 @@ Suas características:
 - Principais ideologias: ${agent.politicians.main_ideologies || 'Conservadora'}
 
 Responda como este político responderia, mantendo coerência com suas posições políticas e ideológicas. Seja respeitoso, político e mantenha o foco em questões relevantes para sua área de atuação.`;
+    const systemPrompt = (agent.trained_prompt && agent.trained_prompt.trim().length > 0)
+      ? agent.trained_prompt
+      : basePrompt;
 
+    // Gerar resposta do agente usando OpenRouter API
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+    let response;
+
+    if (!openRouterKey) {
+      // Simulação usando o prompt preferencial
+      response = `Como ${agent.politicians.name}, posso dizer que: Esta é uma resposta simulada. ${systemPrompt ? '(prompt personalizado aplicado)' : ''}`;
+    } else {
+      try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 segundos timeout
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
 
         const apiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
@@ -303,14 +314,8 @@ Responda como este político responderia, mantendo coerência com suas posiçõe
           body: JSON.stringify({
             model: 'anthropic/claude-3.5-sonnet',
             messages: [
-              {
-                role: 'system',
-                content: systemPrompt
-              },
-              {
-                role: 'user',
-                content: message
-              }
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: message }
             ],
             max_tokens: 500,
             temperature: 0.8
@@ -321,8 +326,7 @@ Responda como este político responderia, mantendo coerência com suas posiçõe
         clearTimeout(timeoutId);
 
         if (!apiResponse.ok) {
-          // Usar sistema de dispatcher inteligente para múltiplas LLMs
-          console.log('🚀 Iniciando sistema de dispatcher inteligente para fallback...');
+          // Fallback: dispatcher inteligente
           try {
             const { smartDispatcher } = require('../services/aiService');
             const result = await smartDispatcher(message, systemPrompt);
@@ -335,12 +339,9 @@ Responda como este político responderia, mantendo coerência com suas posiçõe
           const data = await apiResponse.json();
           response = data.choices[0]?.message?.content || `Como ${agent.politicians.name}, lamento, mas não consegui processar sua mensagem no momento.`;
         }
-
-
-        
       } catch (error) {
         console.error('Erro ao gerar resposta do agente:', error);
-        response = `Como ${agent.politicians.name}, ${agent.politicians.position} ${agent.politicians.state ? `de ${agent.politicians.state}` : ''}, lamento informar que estou com dificuldades técnicas no momento. Tente novamente em alguns instantes.`;
+        response = `Como ${agent.politicians.name}, lamento informar que estou com dificuldades técnicas no momento. Tente novamente em alguns instantes.`;
       }
     }
 
@@ -354,17 +355,7 @@ Responda como este político responderia, mantendo coerência com suas posiçõe
         agent_response: response
       });
 
-    res.json({
-      success: true,
-      data: {
-        message: response,
-        agent: {
-          id: agent.id,
-          politician_name: agent.politicians.name,
-          politician_position: agent.politicians.position
-        }
-      }
-    });
+    res.json({ success: true, response });
   } catch (error) {
     console.error('Erro no chat com agente:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });

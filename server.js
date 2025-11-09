@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
 // Verificar se as variáveis de ambiente estão configuradas
@@ -49,7 +50,8 @@ const corsOptions = {
     'https://direitai-backend.vercel.app',
     'http://localhost:5120',
     'http://localhost:5121',
-    'http://localhost:5122'
+    'http://localhost:5122',
+    'http://localhost:5123'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -60,6 +62,11 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Servir arquivos estáticos da pasta uploads
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/assets', express.static(path.join(__dirname, 'assets')));
+app.use('/images', express.static(path.join(__dirname, 'images')));
 // Logger middleware removido para compatibilidade com Vercel
 // app.use(logger.middleware());
 
@@ -124,6 +131,7 @@ app.use('/api/constitution', require('./routes/constitution'));
 app.use('/api/constitution-downloads', require('./routes/constitutionDownloads'));
 app.use('/api/fix', require('./routes/fix-images'));
 app.use('/api/fix', require('./routes/fix-constitution'));
+app.use('/api/affiliates', require('./routes/affiliates'))
 
 // Root endpoint
 app.get('/', (req, res) => {

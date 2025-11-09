@@ -302,7 +302,7 @@ router.put('/:id', authenticateUser, async (req, res) => {
     const userId = req.user.id;
 
     // Verificar se o usuário tem permissão (admin ou journalist)
-    const { data: user, error: userError } = await supabase
+    const { data: user, error: userError } = await adminSupabase
       .from('users')
       .select('role')
       .eq('id', userId)
@@ -330,7 +330,7 @@ router.put('/:id', authenticateUser, async (req, res) => {
       updateData.published_at = new Date().toISOString();
     }
 
-    const { data: updatedPost, error } = await supabase
+    const { data: updatedPost, error } = await adminSupabase
       .from('politician_posts')
       .update(updateData)
       .eq('id', id)
@@ -372,7 +372,7 @@ router.delete('/:id', authenticateUser, async (req, res) => {
     }
 
     // Verificar se o post existe antes de tentar deletar
-    const { data: existingPost, error: checkError } = await supabase
+    const { data: existingPost, error: checkError } = await adminSupabase
       .from('politician_posts')
       .select('id, title, is_published')
       .eq('id', id)
@@ -385,9 +385,48 @@ router.delete('/:id', authenticateUser, async (req, res) => {
 
     console.log('✅ Post encontrado:', existingPost.title, 'Published:', existingPost.is_published);
 
-    // Soft delete - marcar como não publicado usando adminSupabase para contornar RLS
-    console.log('🔄 Tentando fazer UPDATE do post com adminSupabase...');
-    const { data: deletedPost, error } = await adminSupabase
+    if (!existingPost.is_published) {
+      console.log('🗑️ Post é rascunho; executando deleção definitiva com adminSupabase...');
+
+      // Remover dependências (comentários e likes) para evitar FKs
+      const { error: delCommentsError } = await adminSupabase
+        .from('blog_comments')
+        .delete()
+        .eq('post_id', id);
+      if (delCommentsError) {
+        console.error('Erro ao deletar comentários do post:', delCommentsError);
+        return res.status(500).json({ error: 'Erro ao deletar comentários do post' });
+      }
+
+      const { error: delLikesError } = await adminSupabase
+        .from('blog_post_likes')
+        .delete()
+        .eq('post_id', id);
+      if (delLikesError) {
+        console.error('Erro ao deletar likes do post:', delLikesError);
+        return res.status(500).json({ error: 'Erro ao deletar likes do post' });
+      }
+
+      // Deletar definitivamente o post
+      const { data: hardDeleted, error: hardDeleteError } = await adminSupabase
+        .from('politician_posts')
+        .delete()
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (hardDeleteError) {
+        console.error('Erro ao deletar definitivamente o post:', hardDeleteError);
+        return res.status(500).json({ error: 'Erro interno do servidor' });
+      }
+
+      console.log('✅ Post deletado definitivamente:', hardDeleted?.title || id);
+      return res.json({ message: 'Post deletado definitivamente', post: hardDeleted });
+    }
+
+    // Se publicado, fazer soft delete (despublicar)
+    console.log('🔄 Post publicado; despublicando com adminSupabase...');
+    const { data: unpublishedPost, error } = await adminSupabase
       .from('politician_posts')
       .update({ 
         is_published: false,
@@ -397,15 +436,15 @@ router.delete('/:id', authenticateUser, async (req, res) => {
       .select()
       .single();
 
-    console.log('📊 Resultado do UPDATE com adminSupabase:', { data: deletedPost, error });
+    console.log('📊 Resultado do UPDATE (despublicar) com adminSupabase:', { data: unpublishedPost, error });
 
     if (error) {
-      console.error('Erro ao deletar post:', error);
+      console.error('Erro ao despublicar post:', error);
       return res.status(500).json({ error: 'Erro interno do servidor' });
     }
 
-    console.log('✅ Post deletado com sucesso:', deletedPost.title);
-    res.json({ message: 'Post deletado com sucesso', post: deletedPost });
+    console.log('✅ Post despublicado com sucesso:', unpublishedPost.title);
+    res.json({ message: 'Post despublicado com sucesso', post: unpublishedPost });
   } catch (error) {
     console.error('Erro ao deletar post:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
@@ -418,8 +457,8 @@ router.post('/', authenticateUser, async (req, res) => {
     const { title, content, cover_image_url, tags, politician_id, is_published } = req.body;
     const userId = req.user.id;
 
-    // Verificar se o usuário tem permissão (admin ou journalist)
-    const { data: user, error: userError } = await supabase
+    // Verificar role do usuário (admin/journalist podem publicar; demais criam rascunho)
+    const { data: user, error: userError } = await adminSupabase
       .from('users')
       .select('role')
       .eq('id', userId)
@@ -429,9 +468,7 @@ router.post('/', authenticateUser, async (req, res) => {
       return res.status(403).json({ error: 'Usuário não encontrado' });
     }
 
-    if (!['admin', 'journalist'].includes(user.role)) {
-      return res.status(403).json({ error: 'Permissão negada' });
-    }
+    const canPublish = ['admin', 'journalist'].includes(user.role);
 
     if (!title || !content) {
       return res.status(400).json({ error: 'Título e conteúdo são obrigatórios' });
@@ -439,7 +476,7 @@ router.post('/', authenticateUser, async (req, res) => {
 
     // Verificar se o político existe (se fornecido)
     if (politician_id) {
-      const { data: politician, error: politicianError } = await supabase
+      const { data: politician, error: politicianError } = await adminSupabase
         .from('politicians')
         .select('id')
         .eq('id', politician_id)
@@ -457,16 +494,16 @@ router.post('/', authenticateUser, async (req, res) => {
       cover_image_url,
       tags: tags || [],
       author_id: politician_id || userId, // Usar politician_id se fornecido, senão usar userId
-      is_published: is_published || false,
+      is_published: canPublish ? Boolean(is_published) : false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    if (is_published) {
+    if (postData.is_published) {
       postData.published_at = new Date().toISOString();
     }
 
-    const { data: newPost, error } = await supabase
+    const { data: newPost, error } = await adminSupabase
       .from('politician_posts')
       .insert([postData])
       .select()
@@ -745,7 +782,7 @@ router.post('/:postId/comments', authenticateUser, async (req, res) => {
   try {
     const { postId } = req.params;
     const { content } = req.body;
-    const userId = req.user.id;
+    const userId = req.user.auth_id; // Usar auth_id para foreign key com auth.users
 
     if (!content || content.trim().length === 0) {
       return res.status(400).json({ error: 'Conteúdo do comentário é obrigatório' });
@@ -766,8 +803,8 @@ router.post('/:postId/comments', authenticateUser, async (req, res) => {
       return res.status(404).json({ error: 'Post não encontrado' });
     }
 
-    // Criar comentário
-    const { data: comment, error } = await supabase
+    // Criar comentário usando adminSupabase para contornar RLS
+    const { data: comment, error } = await adminSupabase
       .from('blog_comments')
       .insert({
         post_id: postId,
@@ -775,28 +812,29 @@ router.post('/:postId/comments', authenticateUser, async (req, res) => {
         content: content.trim(),
         is_approved: true // Auto-aprovar por enquanto
       })
-      .select(`
-        id,
-        content,
-        created_at,
-        updated_at,
-        likes_count,
-        users!inner(
-          id,
-          name,
-          email
-        )
-      `)
+      .select()
       .single();
 
     if (error) {
       throw error;
     }
 
-    // Incrementar contador de comentários do post
-    await supabase.rpc('increment_comments_count', { post_id: postId });
+    // Buscar dados do usuário
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, username, email, full_name')
+      .eq('id', req.user.id)
+      .single();
 
-    res.status(201).json(comment);
+    // Nota: Contador de comentários será implementado quando a coluna comments_count for adicionada à tabela politician_posts
+
+    // Retornar comentário com dados do usuário
+    const commentWithUser = {
+      ...comment,
+      users: user || { id: req.user.id, username: 'Usuário', email: '', full_name: null }
+    };
+
+    res.status(201).json(commentWithUser);
   } catch (error) {
     console.error('Erro ao criar comentário:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
@@ -836,8 +874,16 @@ router.post('/comments/:commentId/like', authenticateUser, async (req, res) => {
         .eq('comment_id', commentId)
         .eq('user_id', userId);
 
-      // Decrementar contador
-      await supabase.rpc('decrement_comment_likes_count', { comment_id: commentId });
+      // Decrementar contador manualmente
+      const { count: likesCount } = await supabase
+        .from('blog_comment_likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('comment_id', commentId);
+      
+      await supabase
+        .from('blog_comments')
+        .update({ likes_count: likesCount || 0 })
+        .eq('id', commentId);
       
       res.json({ liked: false, message: 'Comentário descurtido' });
     } else {
@@ -846,8 +892,16 @@ router.post('/comments/:commentId/like', authenticateUser, async (req, res) => {
         .from('blog_comment_likes')
         .insert({ comment_id: commentId, user_id: userId });
 
-      // Incrementar contador
-      await supabase.rpc('increment_comment_likes_count', { comment_id: commentId });
+      // Incrementar contador manualmente
+      const { count: likesCount } = await supabase
+        .from('blog_comment_likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('comment_id', commentId);
+      
+      await supabase
+        .from('blog_comments')
+        .update({ likes_count: likesCount })
+        .eq('id', commentId);
       
       res.json({ liked: true, message: 'Comentário curtido' });
     }
@@ -890,8 +944,17 @@ router.delete('/comments/:commentId', authenticateUser, async (req, res) => {
       throw deleteError;
     }
 
-    // Decrementar contador de comentários do post
-    await supabase.rpc('decrement_comments_count', { post_id: comment.post_id });
+    // Decrementar contador de comentários do post manualmente
+    const { count } = await supabase
+      .from('blog_comments')
+      .select('*', { count: 'exact', head: true })
+      .eq('post_id', comment.post_id)
+      .eq('is_approved', true);
+    
+    await supabase
+      .from('politician_posts')
+      .update({ comments_count: count || 0 })
+      .eq('id', comment.post_id);
 
     res.json({ message: 'Comentário deletado com sucesso' });
   } catch (error) {

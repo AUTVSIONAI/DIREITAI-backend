@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const router = express.Router();
 
 // Register new user
@@ -18,11 +18,11 @@ router.post('/register', async (req, res) => {
     }
 
     // Create user profile
-    const { data: profileData, error: profileError } = await supabase
+    const { data: profileData, error: profileError } = await adminSupabase
       .from('users')
       .insert([
         {
-          id: authData.user.id,
+          auth_id: authData.user.id,
           email,
           username,
           full_name: fullName,
@@ -61,11 +61,20 @@ router.post('/login', async (req, res) => {
     });
 
     if (error) {
+      // Para desenvolvimento: permitir login mesmo sem confirmação de email
+      if (error.message === 'Email not confirmed' && process.env.NODE_ENV !== 'production') {
+        console.log('⚠️ Desenvolvimento: Permitindo login sem confirmação de email para:', email);
+        // Tentar fazer login administrativo ou criar usuário temporário
+        // Por enquanto, vamos retornar um erro mais amigável
+        return res.status(400).json({ 
+          error: 'Email não confirmado. Em desenvolvimento, verifique o console do Supabase.' 
+        });
+      }
       return res.status(400).json({ error: error.message });
     }
 
     // Buscar o perfil real do usuário na tabela users
-    const { data: profileData, error: profileError } = await supabase
+    const { data: profileData, error: profileError } = await adminSupabase
       .from('users')
       .select('*')
       .eq('auth_id', data.user.id)
@@ -120,7 +129,7 @@ router.get('/me', async (req, res) => {
     }
 
     // Get user profile
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile, error: profileError } = await adminSupabase
       .from('users')
       .select('*')
       .eq('auth_id', user.id)

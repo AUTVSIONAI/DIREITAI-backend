@@ -164,6 +164,120 @@ router.get('/conversations', authenticateUser, async (req, res) => {
   }
 });
 
+// Get specific conversation
+router.get('/conversations/:conversationId', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { conversationId } = req.params;
+
+    const result = await aiService.getConversation(userId, conversationId);
+
+    if (!result.success) {
+      return res.status(404).json({ 
+        error: 'Conversation not found',
+        details: result.error
+      });
+    }
+
+    res.json(result.data);
+  } catch (error) {
+    console.error('Error fetching conversation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create new conversation
+router.post('/conversations', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { title } = req.body;
+
+    const result = await aiService.createConversation(userId, title);
+
+    if (!result.success) {
+      return res.status(500).json({ 
+        error: 'Failed to create conversation',
+        details: result.error
+      });
+    }
+
+    res.status(201).json(result.data);
+  } catch (error) {
+    console.error('Error creating conversation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update conversation
+router.put('/conversations/:conversationId', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { conversationId } = req.params;
+    const updates = req.body;
+
+    const result = await aiService.updateConversation(userId, conversationId, updates);
+
+    if (!result.success) {
+      return res.status(404).json({ 
+        error: 'Failed to update conversation',
+        details: result.error
+      });
+    }
+
+    res.json(result.data);
+  } catch (error) {
+    console.error('Error updating conversation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete conversation
+router.delete('/conversations/:conversationId', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { conversationId } = req.params;
+
+    const result = await aiService.deleteConversation(userId, conversationId);
+
+    if (!result.success) {
+      return res.status(404).json({ 
+        error: 'Failed to delete conversation',
+        details: result.error
+      });
+    }
+
+    res.json({ message: 'Conversation deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting conversation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get conversation messages
+router.get('/conversations/:conversationId/messages', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { conversationId } = req.params;
+
+    const result = await aiService.getConversationMessages(userId, conversationId);
+
+    if (!result.success) {
+      return res.status(404).json({ 
+        error: 'Failed to fetch messages',
+        details: result.error
+      });
+    }
+
+    res.json({
+      messages: result.data,
+      total: result.data.length
+    });
+  } catch (error) {
+    console.error('Error fetching messages:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Creative AI Content Generation
 router.post('/creative-ai/generate', authenticateUser, async (req, res) => {
   try {
