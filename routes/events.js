@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser, authenticateAdmin } = require('../middleware/auth');
 const router = express.Router();
 
@@ -11,6 +11,8 @@ router.get('/', async (req, res) => {
     let query = supabase
       .from('events')
       .select('*')
+      // Ordena preferencialmente por start_date; mantém order por date para compatibilidade
+      .order('start_date', { ascending: true })
       .order('date', { ascending: true })
       .limit(parseInt(limit));
 
@@ -23,7 +25,8 @@ router.get('/', async (req, res) => {
     }
 
     if (status) {
-      query = query.eq('status', status);
+      const normalized = String(status).toLowerCase() === 'active' ? 'ativo' : status;
+      query = query.eq('status', normalized);
     }
 
     const { data: events, error } = await query;
@@ -60,9 +63,9 @@ router.get('/nearby', authenticateUser, async (req, res) => {
       .from('events')
       .select('*')
       .eq('city', userProfile?.city)
-      .eq('status', 'active')
-      .gte('date', new Date().toISOString())
-      .order('date', { ascending: true })
+      .eq('status', 'ativo')
+      .gte('start_date', new Date().toISOString())
+      .order('start_date', { ascending: true })
       .limit(20);
 
     if (error) {
@@ -320,15 +323,24 @@ router.post('/', authenticateUser, authenticateAdmin, async (req, res) => {
 // Update event (admin only)
 router.put('/:id', authenticateUser, async (req, res) => {
   try {
-    // Check if user is admin
-    if (!req.user.is_admin) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
     const { id } = req.params;
+    // Buscar evento para validar permissões
+    const { data: existing, error: fetchError } = await adminSupabase
+      .from('events')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (fetchError || !existing) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    // Permitir apenas admin ou criador
+    const isAdmin = (req.user?.role === 'admin' || req.user?.role === 'super_admin') || (req.user?.is_admin === true) || (req.user?.email === 'admin@direitai.com');
+    const isOwner = (existing?.created_by === req.user?.id) || (existing?.created_by === req.user?.auth_id);
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'Access denied: admin or owner required' });
+    }
     const updateData = { ...req.body, updated_at: new Date().toISOString() };
-
-    const { data: event, error } = await supabase
+    const { data: event, error } = await adminSupabase
       .from('events')
       .update(updateData)
       .eq('id', id)
@@ -346,17 +358,25 @@ router.put('/:id', authenticateUser, async (req, res) => {
   }
 });
 
-// Delete event (admin only)
+// Delete event (admin or owner)
 router.delete('/:id', authenticateUser, async (req, res) => {
   try {
-    // Check if user is admin
-    if (!req.user.is_admin) {
-      return res.status(403).json({ error: 'Admin access required' });
+    const { id } = req.params;
+    const { data: existing, error: fetchError } = await adminSupabase
+      .from('events')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (fetchError || !existing) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    const isAdmin = (req.user?.role === 'admin' || req.user?.role === 'super_admin') || (req.user?.is_admin === true) || (req.user?.email === 'admin@direitai.com');
+    const isOwner = (existing?.created_by === req.user?.id) || (existing?.created_by === req.user?.auth_id);
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'Access denied: admin or owner required' });
     }
 
-    const { id } = req.params;
-
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('events')
       .delete()
       .eq('id', id);

@@ -3,6 +3,22 @@ const { supabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
+async function isPoliticianOwnedByUser(politicianId, user) {
+  try {
+    const { data: p, error } = await supabase
+      .from('politicians')
+      .select('id, owner_user_id, auth_id')
+      .eq('id', politicianId)
+      .single();
+    if (error || !p) return false;
+    if (p.owner_user_id && String(p.owner_user_id) === String(user.id)) return true;
+    if (p.auth_id && String(p.auth_id) === String(user.auth_id)) return true;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
 // Listar agentes
 router.get('/', async (req, res) => {
   try {
@@ -65,7 +81,7 @@ router.get('/:id', async (req, res) => {
           state,
           party,
           photo_url,
-          short_bio,
+          bio,
           government_plan,
           main_ideologies
         )
@@ -75,6 +91,11 @@ router.get('/:id', async (req, res) => {
 
     if (error || !agent) {
       return res.status(404).json({ error: 'Agente não encontrado' });
+    }
+    
+    // Map bio to short_bio for consistency if needed, or just use bio
+    if (agent.politicians && agent.politicians.bio) {
+        agent.politicians.short_bio = agent.politicians.bio;
     }
 
     res.json({
@@ -90,10 +111,7 @@ router.get('/:id', async (req, res) => {
 // Criar agente (apenas admin)
 router.post('/', authenticateUser, async (req, res) => {
   try {
-    // Verificar se é admin usando o role já definido no middleware
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem criar agentes.' });
-    }
+    const isAdmin = req.user.role === 'admin';
 
     const {
       politician_id,
@@ -106,7 +124,6 @@ router.post('/', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'ID do político e prompt são obrigatórios' });
     }
 
-    // Verificar se o político existe
     const { data: politician, error: politicianError } = await supabase
       .from('politicians')
       .select('id')
@@ -116,6 +133,13 @@ router.post('/', authenticateUser, async (req, res) => {
 
     if (politicianError || !politician) {
       return res.status(404).json({ error: 'Político não encontrado' });
+    }
+
+    if (!isAdmin) {
+      const canManage = await isPoliticianOwnedByUser(politician_id, req.user);
+      if (!canManage) {
+        return res.status(403).json({ error: 'Acesso negado. Somente o político dono pode criar seus agentes.' });
+      }
     }
 
     const { data: agent, error } = await supabase
@@ -177,6 +201,21 @@ router.put('/:id', authenticateUser, async (req, res) => {
       return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem editar este recurso.' });
     }
 
+    if (!isAdmin) {
+      const { data: agentOwner } = await supabase
+        .from('politician_agents')
+        .select('politician_id')
+        .eq('id', id)
+        .single();
+      if (!agentOwner || !agentOwner.politician_id) {
+        return res.status(404).json({ error: 'Agente não encontrado' });
+      }
+      const canManage = await isPoliticianOwnedByUser(agentOwner.politician_id, req.user);
+      if (!canManage) {
+        return res.status(403).json({ error: 'Acesso negado. Somente o político dono pode editar este agente.' });
+      }
+    }
+
     const { data: agent, error } = await supabase
       .from('politician_agents')
       .update(updateData)
@@ -217,12 +256,24 @@ router.put('/:id', authenticateUser, async (req, res) => {
 // Deletar agente (apenas admin)
 router.delete('/:id', authenticateUser, async (req, res) => {
   try {
-    // Verificar se é admin usando o role já definido no middleware
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem deletar agentes.' });
-    }
+    const isAdmin = req.user.role === 'admin';
 
     const { id } = req.params;
+
+    if (!isAdmin) {
+      const { data: agentOwner } = await supabase
+        .from('politician_agents')
+        .select('politician_id')
+        .eq('id', id)
+        .single();
+      if (!agentOwner || !agentOwner.politician_id) {
+        return res.status(404).json({ error: 'Agente não encontrado' });
+      }
+      const canManage = await isPoliticianOwnedByUser(agentOwner.politician_id, req.user);
+      if (!canManage) {
+        return res.status(403).json({ error: 'Acesso negado. Somente o político dono pode remover este agente.' });
+      }
+    }
 
     const { error } = await supabase
       .from('politician_agents')

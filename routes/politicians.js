@@ -3,10 +3,23 @@ const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
-// Listar políticos
+    // Listar políticos
 router.get('/', async (req, res) => {
   try {
-    const { state, party, position, search, limit = 12, page = 1, use_real_data } = req.query;
+    const { state, party, position, search, email, limit = 12, page = 1, use_real_data } = req.query;
+    
+    // Se for busca por email para resolver vínculo (interno/admin ou próprio usuário)
+    if (email) {
+      // Usar adminSupabase para garantir que conseguimos buscar pelo email independente de RLS
+      const { data, error } = await adminSupabase
+        .from('politicians')
+        .select('*')
+        .ilike('email', email)
+        .limit(1);
+        
+      if (error) throw error;
+      return res.json(data);
+    }
     
     // Se solicitado dados reais de deputados federais
     if (use_real_data === 'true' && position === 'deputado') {
@@ -88,7 +101,7 @@ router.get('/', async (req, res) => {
     
     let query = supabase
       .from('politicians')
-      .select('*, expenses_visible', { count: 'exact' })
+      .select('*, expenses_visible, politician_points(points)', { count: 'exact' })
       .eq('is_active', true)
       .eq('is_approved', true)
       .order('name')
@@ -98,6 +111,7 @@ router.get('/', async (req, res) => {
     if (state) {
       query = query.eq('state', state.toUpperCase());
     }
+
     if (party) {
       query = query.eq('party', party);
     }
@@ -108,22 +122,36 @@ router.get('/', async (req, res) => {
       query = query.or(`name.ilike.%${search}%,short_bio.ilike.%${search}%`);
     }
 
-    const { data: politicians, error, count: totalCount } = await query;
+    const { data, error, count } = await query;
 
-    // Calcular informações de paginação
-    const totalPages = Math.ceil((totalCount || 0) / parseInt(limit));
-    const currentPage = parseInt(page);
+    if (error) throw error;
 
-    res.json({
+    // Calcular score total para cada político
+    const enrichedData = data.map(politician => {
+      const totalPoints = politician.politician_points 
+        ? politician.politician_points.reduce((sum, item) => sum + item.points, 0) 
+        : 0;
+      
+      // Remover o array de pontos para não poluir a resposta
+      const { politician_points, ...rest } = politician;
+      return {
+        ...rest,
+        gamification_score: totalPoints
+      };
+    });
+
+    const totalPages = Math.ceil((count || 0) / parseInt(limit));
+    
+    return res.json({
       success: true,
-      data: politicians,
+      data: enrichedData,
       pagination: {
-        page: currentPage,
+        page: parseInt(page),
         pages: totalPages,
         limit: parseInt(limit),
-        total: totalCount || 0
+        total: count
       },
-      source: 'supabase'
+      source: 'database'
     });
   } catch (error) {
     console.error('Erro na listagem de políticos:', error);
@@ -203,7 +231,8 @@ router.get('/:id', async (req, res) => {
           voice_id,
           personality_config,
           is_active
-        )
+        ),
+        politician_points(points)
       `)
       .eq('id', id)
       .eq('is_active', true)
@@ -214,10 +243,21 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Político não encontrado' });
     }
 
+    // Calcular score
+    const totalPoints = politician.politician_points 
+      ? politician.politician_points.reduce((sum, item) => sum + item.points, 0) 
+      : 0;
+
+    const { politician_points, ...rest } = politician;
+    const enrichedPolitician = {
+      ...rest,
+      gamification_score: totalPoints
+    };
+
     res.json({
       success: true,
-      data: politician,
-      source: 'supabase'
+      data: enrichedPolitician,
+      source: 'database'
     });
   } catch (error) {
     console.error('Erro ao buscar político:', error);
@@ -240,7 +280,9 @@ router.post('/', authenticateUser, async (req, res) => {
       party,
       photo_url,
       short_bio,
+      bio,
       social_links,
+      social_media,
       government_plan,
       government_plan_pdf_url,
       main_ideologies
@@ -250,6 +292,10 @@ router.post('/', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'Nome e cargo são obrigatórios' });
     }
 
+    // Map fields to DB columns (prefer short_bio over bio if DB uses short_bio)
+    const shortBioToSave = short_bio || bio;
+    const socialLinksToSave = social_links || social_media || {};
+
     const { data: politician, error } = await supabase
       .from('politicians')
       .insert({
@@ -258,8 +304,8 @@ router.post('/', authenticateUser, async (req, res) => {
         state: state?.toUpperCase(),
         party,
         photo_url,
-        short_bio,
-        social_links: social_links || {},
+        short_bio: shortBioToSave,
+        social_links: socialLinksToSave,
         government_plan,
         government_plan_pdf_url,
         main_ideologies: main_ideologies || []
@@ -294,12 +340,35 @@ router.put('/:id', authenticateUser, async (req, res) => {
     const { id } = req.params;
     const updateData = req.body;
 
-    // Remover campos que não devem ser atualizados diretamente
+    // Mapear campos legados para o formato correto do banco (short_bio, social_links)
+    if (updateData.bio) {
+      if (!updateData.short_bio) updateData.short_bio = updateData.bio;
+      delete updateData.bio;
+    }
+    if (updateData.social_media) {
+      if (!updateData.social_links) updateData.social_links = updateData.social_media;
+      delete updateData.social_media;
+    }
+    
+    // Mapear status para is_approved
+    if (updateData.status === 'approved') {
+      updateData.is_approved = true;
+      updateData.is_active = true;
+    } else if (updateData.status === 'pending') {
+      updateData.is_approved = false;
+    } else if (updateData.status === 'rejected') {
+      updateData.is_approved = false;
+      updateData.is_active = false;
+    }
+    // NOTA: 'status' é uma coluna válida no banco, então não deletamos.
+    
+    // Remover campos que não devem ser atualizados diretamente ou não existem
     delete updateData.id;
     delete updateData.created_at;
     delete updateData.average_rating;
     delete updateData.total_votes;
     delete updateData.popularity_score;
+    // level, source, municipality SÃO colunas válidas no banco, manter.
 
     if (updateData.state) {
       updateData.state = updateData.state.toUpperCase();

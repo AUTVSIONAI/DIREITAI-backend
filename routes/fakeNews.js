@@ -140,35 +140,51 @@ router.post('/analyze', authenticateUser, async (req, res) => {
 
     // Verificar limites do usuário para fake news
     const userPlan = req.user.plan || 'gratuito';
+
+    // Buscar limite pelo plano configurado na tabela de planos (se existir)
+    let dailyLimit = null;
+    try {
+      const { data: planData } = await adminSupabase
+        .from('subscription_plans')
+        .select('limits')
+        .eq('slug', userPlan)
+        .single();
+
+      dailyLimit = planData?.limits?.fake_news_analyses ?? null;
+    } catch (_) {}
+
+    // Fallback para limites padrão caso não exista configuração
+    if (dailyLimit === null || typeof dailyLimit === 'undefined') {
+      const defaultLimits = {
+        gratuito: 1,
+        cidadao: 5,
+        premium: 15,
+        pro: 20,
+        elite: 30
+      };
+      dailyLimit = defaultLimits[userPlan] || defaultLimits.gratuito;
+    }
+
+    // Janela diária (UTC) para contagem
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Contar análises de fake news de hoje
-    const { count: todayAnalyses } = await supabase
+    // Contar análises de fake news de hoje usando adminSupabase para contornar RLS
+    const { count: todayAnalyses } = await adminSupabase
       .from('fake_news_checks')
       .select('*', { count: 'exact', head: true })
       .eq('usuario_id', userId)
       .gte('created_at', today.toISOString())
       .lt('created_at', tomorrow.toISOString());
 
-    // Definir limites por plano
-    const limits = {
-      gratuito: 1,
-      cidadao: 5,
-      premium: 15,
-      pro: 20,
-      elite: 30
-    };
-
-    const dailyLimit = limits[userPlan] || limits.gratuito;
     const usedToday = todayAnalyses || 0;
 
-    // Verificar se excedeu o limite (exceto para plano supremo)
+    // Verificar se excedeu o limite (diário) — -1 significa ilimitado
     if (dailyLimit !== -1 && usedToday >= dailyLimit) {
       return res.status(429).json({ 
-        error: 'Limite diário de análises excedido',
+        error: 'limite diário de análises excedido',
         plan: userPlan,
         limit: dailyLimit,
         used: usedToday,
@@ -238,6 +254,154 @@ router.post('/analyze', authenticateUser, async (req, res) => {
 
   } catch (error) {
     console.error('Erro na análise:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+router.post('/analyze/politician', authenticateUser, async (req, res) => {
+  try {
+    if (req.user.role !== 'politician' && !req.user.is_admin) {
+      return res.status(403).json({ error: 'Permissão negada' });
+    }
+    const { content, type = 'texto' } = req.body;
+    const userId = req.user.id;
+    if (!content || content.trim().length === 0) {
+      return res.status(400).json({ error: 'Conteúdo é obrigatório' });
+    }
+    const userPlan = req.user.plan || 'gratuito';
+    let dailyLimit = null;
+    try {
+      const { data: planData } = await adminSupabase
+        .from('subscription_plans')
+        .select('limits')
+        .eq('slug', userPlan)
+        .single();
+      dailyLimit = planData?.limits?.fake_news_analyses ?? null;
+    } catch (_) {}
+    if (dailyLimit === null || typeof dailyLimit === 'undefined') {
+      const defaults = { gratuito: 1, cidadao: 5, premium: 15, pro: 20, elite: 30, politico: 30 };
+      dailyLimit = defaults[userPlan] || defaults.gratuito;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const { count: todayAnalyses } = await adminSupabase
+      .from('fake_news_checks')
+      .select('*', { count: 'exact', head: true })
+      .eq('usuario_id', userId)
+      .gte('created_at', today.toISOString())
+      .lt('created_at', tomorrow.toISOString());
+    const usedToday = todayAnalyses || 0;
+    if (dailyLimit !== -1 && usedToday >= dailyLimit) {
+      return res.status(429).json({ error: 'limite diário de análises excedido' });
+    }
+    let processedContent = content;
+    if (type === 'link') processedContent = content;
+    const analysisResult = await analyzeFakeNews(processedContent, type);
+    if (!analysisResult.success) {
+      return res.status(500).json({ error: 'Erro na análise de conteúdo' });
+    }
+    const insertData = {
+      usuario_id: userId,
+      tipo_input: type,
+      conteudo: content.substring(0, 1000),
+      resultado: analysisResult.resultado,
+      explicacao: analysisResult.explicacao,
+      confianca: analysisResult.confianca,
+      fontes: analysisResult.fontes || []
+    };
+    const { data: savedCheck, error: saveError } = await adminSupabase
+      .from('fake_news_checks')
+      .insert(insertData)
+      .select()
+      .single();
+    if (saveError) {
+      return res.status(500).json({ error: 'Erro ao salvar verificação' });
+    }
+    res.json({
+      id: savedCheck.id,
+      resultado: analysisResult.resultado,
+      confianca: analysisResult.confianca,
+      explicacao: analysisResult.explicacao,
+      fontes: analysisResult.fontes || [],
+      created_at: savedCheck.created_at
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+router.post('/analyze/journalist', authenticateUser, async (req, res) => {
+  try {
+    if (req.user.role !== 'journalist' && !req.user.is_admin) {
+      return res.status(403).json({ error: 'Permissão negada' });
+    }
+    const { content, type = 'texto' } = req.body;
+    const userId = req.user.id;
+    if (!content || content.trim().length === 0) {
+      return res.status(400).json({ error: 'Conteúdo é obrigatório' });
+    }
+    const userPlan = req.user.plan || 'gratuito';
+    let dailyLimit = null;
+    try {
+      const { data: planData } = await adminSupabase
+        .from('subscription_plans')
+        .select('limits')
+        .eq('slug', userPlan)
+        .single();
+      dailyLimit = planData?.limits?.fake_news_analyses ?? null;
+    } catch (_) {}
+    if (dailyLimit === null || typeof dailyLimit === 'undefined') {
+      const defaults = { gratuito: 1, cidadao: 5, premium: 15, pro: 20, elite: 30, jornalista: 30 };
+      dailyLimit = defaults[userPlan] || defaults.gratuito;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const { count: todayAnalyses } = await adminSupabase
+      .from('fake_news_checks')
+      .select('*', { count: 'exact', head: true })
+      .eq('usuario_id', userId)
+      .gte('created_at', today.toISOString())
+      .lt('created_at', tomorrow.toISOString());
+    const usedToday = todayAnalyses || 0;
+    if (dailyLimit !== -1 && usedToday >= dailyLimit) {
+      return res.status(429).json({ error: 'limite diário de análises excedido' });
+    }
+    let processedContent = content;
+    if (type === 'link') processedContent = content;
+    const analysisResult = await analyzeFakeNews(processedContent, type);
+    if (!analysisResult.success) {
+      return res.status(500).json({ error: 'Erro na análise de conteúdo' });
+    }
+    const insertData = {
+      usuario_id: userId,
+      tipo_input: type,
+      conteudo: content.substring(0, 1000),
+      resultado: analysisResult.resultado,
+      explicacao: analysisResult.explicacao,
+      confianca: analysisResult.confianca,
+      fontes: analysisResult.fontes || []
+    };
+    const { data: savedCheck, error: saveError } = await adminSupabase
+      .from('fake_news_checks')
+      .insert(insertData)
+      .select()
+      .single();
+    if (saveError) {
+      return res.status(500).json({ error: 'Erro ao salvar verificação' });
+    }
+    res.json({
+      id: savedCheck.id,
+      resultado: analysisResult.resultado,
+      confianca: analysisResult.confianca,
+      explicacao: analysisResult.explicacao,
+      fontes: analysisResult.fontes || [],
+      created_at: savedCheck.created_at
+    });
+  } catch (error) {
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

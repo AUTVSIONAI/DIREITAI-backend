@@ -49,18 +49,14 @@ const authenticateUser = async (req, res, next) => {
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     console.log('🔍 Verificando token:', token.substring(0, 20) + '...');
     
-    // Verificar o token com Supabase usando o cliente
     let user;
     try {
-      const { data, error } = await supabase.auth.getUser(token);
+      const { data, error } = await adminSupabase.auth.getUser(token);
       if (error) {
-        console.error('❌ Auth error:', error.message);
         return res.status(401).json({ error: 'Token inválido ou expirado' });
       }
       user = data.user;
     } catch (authError) {
-      console.error('❌ Auth error:', authError.message);
-      console.log('🔍 Token completo:', token);
       return res.status(401).json({ error: 'Token inválido ou expirado' });
     }
     
@@ -85,13 +81,19 @@ const authenticateUser = async (req, res, next) => {
     
     console.log('✅ Usuário encontrado na tabela users:', dbUser.email);
     
+    const emailAdmin = user.email === 'admin@direitai.com';
+    const metaRoleAdmin = (user.user_metadata?.role === 'admin') || (Array.isArray(user.user_metadata?.roles) && user.user_metadata.roles.includes('admin'));
+    const dbRoleAdmin = (dbUser.role === 'admin');
+    const isAdminFlag = !!dbUser.is_admin || dbRoleAdmin || metaRoleAdmin || emailAdmin || !!user.user_metadata?.is_admin;
+    const metaRole = user.user_metadata?.role || (Array.isArray(user.user_metadata?.roles) ? user.user_metadata.roles[0] : undefined);
     req.user = {
-      id: dbUser.id, // Usar o ID da tabela users para foreign keys
-      auth_id: user.id, // ID do auth.users
+      id: dbUser.id,
+      auth_id: user.id,
       email: dbUser.email,
       username: dbUser.username || user.email.split('@')[0],
       full_name: dbUser.full_name || user.user_metadata?.full_name || user.email.split('@')[0],
-      role: dbUser.role || (dbUser.is_admin ? 'admin' : 'user'),
+      role: dbRoleAdmin ? 'admin' : (dbUser.role || metaRole || (isAdminFlag ? 'admin' : 'user')),
+      is_admin: isAdminFlag,
       plan: dbUser.plan || 'gratuito',
       points: dbUser.points || 0
     };
@@ -122,7 +124,10 @@ const authenticateAdmin = async (req, res, next) => {
     console.log('🔍 Admin middleware - user role:', req.user.role);
     
     // Verificar se o usuário é admin
-    if (req.user.role !== 'admin') {
+    const isAdminRole = req.user.role === 'admin' || req.user.role === 'super_admin'
+    const isAdminFlag = req.user.is_admin === true
+    const isAdminEmail = req.user.email === 'admin@direitai.com'
+    if (!isAdminRole && !isAdminFlag && !isAdminEmail) {
       console.log('❌ Admin middleware - access denied for role:', req.user.role);
       return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
     }

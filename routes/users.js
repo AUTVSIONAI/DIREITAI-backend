@@ -25,48 +25,74 @@ router.get('/profile', authenticateUser, async (req, res) => {
   }
 });
 
-// Update user profile
+// Update user profile (partial updates allowed)
 router.put('/profile', authenticateUser, async (req, res) => {
   try {
     console.log('📝 Profile update request for user:', req.user.id);
     console.log('📝 Request body:', req.body);
-    
-    const { username, full_name, bio, city, state, phone, birth_date } = req.body;
 
-    // Validate required fields
-    if (!username || !full_name) {
-      console.log('❌ Missing required fields: username or full_name');
-      return res.status(400).json({ error: 'Username and full name are required' });
+    const allowed = ['username', 'full_name', 'bio', 'city', 'state', 'phone', 'birth_date', 'avatar_url'];
+    const updateData = { updated_at: new Date().toISOString() };
+
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+        let val = req.body[key];
+        if (typeof val === 'string') {
+          val = val.trim();
+          if (val.length === 0) val = null;
+        }
+        if (key === 'birth_date' && val) {
+          const d = new Date(val);
+          if (isNaN(d.getTime())) {
+            return res.status(400).json({ error: 'Invalid birth_date' });
+          }
+          // manter string (date) ou ISO curto YYYY-MM-DD conforme coluna
+          const isoShort = d.toISOString().slice(0, 10);
+          val = isoShort;
+        }
+        updateData[key] = val;
+      }
     }
 
-    const updateData = {
-      username,
-      full_name,
-      bio,
-      city,
-      state,
-      phone,
-      birth_date,
-      updated_at: new Date().toISOString(),
-    };
+    const hasFields = Object.keys(updateData).some(k => k !== 'updated_at' && updateData[k] !== undefined);
+    if (!hasFields) {
+      console.log('❌ No updatable fields provided');
+      return res.status(400).json({ error: 'No fields to update' });
+    }
 
-    console.log('📝 Update data:', updateData);
-    console.log('🔍 User ID from req.user:', req.user.id);
+    if (updateData.username && typeof updateData.username !== 'string' && updateData.username !== null) {
+      return res.status(400).json({ error: 'Invalid username' });
+    }
+    if (updateData.full_name && typeof updateData.full_name !== 'string' && updateData.full_name !== null) {
+      return res.status(400).json({ error: 'Invalid full name' });
+    }
 
-    const { data, error } = await supabase
+    // Tentar atualizar por id da tabela; se não houver linha, tentar por auth_id
+    let { data, error } = await adminSupabase
       .from('users')
       .update(updateData)
       .eq('id', req.user.id)
-      .select()
-      .single();
+      .select();
+
+    if ((!error && Array.isArray(data) && data.length === 0) || error?.code === 'PGRST116') {
+      const authId = req.user.auth_id || req.user.id;
+      const upd2 = await adminSupabase
+        .from('users')
+        .update(updateData)
+        .eq('auth_id', authId)
+        .select();
+      data = upd2.data;
+      error = upd2.error;
+    }
 
     if (error) {
       console.log('❌ Supabase update error:', error);
       return res.status(400).json({ error: error.message });
     }
 
-    console.log('✅ Profile updated successfully:', data);
-    res.json({ message: 'Profile updated successfully', profile: data });
+    const updated = Array.isArray(data) ? (data[0] || null) : data;
+    console.log('✅ Profile updated successfully:', updated);
+    res.json({ message: 'Profile updated successfully', profile: updated });
   } catch (error) {
     console.error('Update profile error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -446,6 +472,11 @@ router.get('/usage-stats', authenticateUser, async (req, res) => {
         ai_conversations: 10,
         fake_news_analyses: 1,
         political_agents: 3
+      },
+      patriota: {
+        ai_conversations: 20,
+        fake_news_analyses: 2,
+        political_agents: 1
       },
       engajado: {
         ai_conversations: 100,

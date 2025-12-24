@@ -529,3 +529,109 @@ router.patch('/:id/reorder', requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
+
+router.post('/seed-b2b', requireAdmin, async (req, res) => {
+  try {
+    const entries = [
+      {
+        name: 'Plano Político Pro',
+        slug: 'politico',
+        description: 'Ferramentas para políticos e equipes',
+        price_monthly: 199.9,
+        price_yearly: 1999,
+        features: ['Agentes políticos', 'Gestão de equipe', 'Análise de fake news avançada'],
+        limits: { ai_conversations: 500, fake_news_analyses: 100 },
+        is_active: true,
+        is_popular: true,
+        sort_order: 10,
+        color: 'blue',
+        icon: 'Crown'
+      },
+      {
+        name: 'Plano Jornalista Pro',
+        slug: 'jornalista',
+        description: 'Ferramentas para jornalistas e redações',
+        price_monthly: 149.9,
+        price_yearly: 1499,
+        features: ['Publicação e gestão de posts', 'Monitoramento de notícias', 'Análise de fake news'],
+        limits: { ai_conversations: 300, fake_news_analyses: 200 },
+        is_active: true,
+        is_popular: false,
+        sort_order: 11,
+        color: 'green',
+        icon: 'Star'
+      },
+      {
+        name: 'Plano Partido Pro',
+        slug: 'partido',
+        description: 'Ferramentas para diretórios partidários',
+        price_monthly: 499.9,
+        price_yearly: 4990,
+        features: ['Gestão multi-equipes', 'Relatórios avançados', 'Análise de fake news em massa'],
+        limits: { ai_conversations: 2000, fake_news_analyses: 500 },
+        is_active: true,
+        is_popular: false,
+        sort_order: 12,
+        color: 'purple',
+        icon: 'Users'
+      }
+    ];
+
+    const created = [];
+    for (const p of entries) {
+      const { data: existing } = await supabase
+        .from('subscription_plans')
+        .select('id')
+        .eq('slug', p.slug)
+        .single();
+
+      if (existing && existing.id) {
+        const { data: updated } = await supabase
+          .from('subscription_plans')
+          .update({
+            name: p.name,
+            description: p.description,
+            price_monthly: p.price_monthly,
+            price_yearly: p.price_yearly,
+            features: p.features,
+            limits: p.limits,
+            is_active: p.is_active,
+            is_popular: p.is_popular,
+            sort_order: p.sort_order,
+            color: p.color,
+            icon: p.icon,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existing.id)
+          .select()
+          .single();
+        created.push(updated || { slug: p.slug });
+      } else {
+        const { data: inserted } = await supabase
+          .from('subscription_plans')
+          .insert({
+            name: p.name,
+            slug: p.slug,
+            description: p.description,
+            price_monthly: p.price_monthly,
+            price_yearly: p.price_yearly,
+            features: p.features,
+            limits: p.limits,
+            is_active: p.is_active,
+            is_popular: p.is_popular,
+            sort_order: p.sort_order,
+            color: p.color,
+            icon: p.icon
+          })
+          .select()
+          .single();
+        created.push(inserted || { slug: p.slug });
+      }
+    }
+
+    res.json({ success: true, data: created });
+  } catch (error) {
+    console.error('Seed B2B plans error:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});

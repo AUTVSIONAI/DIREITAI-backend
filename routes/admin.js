@@ -219,10 +219,11 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
   try {
     const { userId } = req.params;
 
+    // Tentar buscar por id ou auth_id
     const { data: user, error } = await adminSupabase
       .from('users')
       .select('*')
-      .eq('id', userId)
+      .or(`id.eq.${userId},auth_id.eq.${userId}`)
       .single();
 
     if (error || !user) {
@@ -239,7 +240,7 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
           location
         )
       `)
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(10);
 
@@ -247,7 +248,7 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
     const { data: conversations } = await adminSupabase
       .from('ai_conversations')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(10);
 
@@ -255,7 +256,7 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
     const { data: orders } = await adminSupabase
       .from('orders')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(10);
 
@@ -301,10 +302,11 @@ router.put('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
     if (is_admin !== undefined) updateData.is_admin = is_admin;
     if (points !== undefined) updateData.points = points;
 
+    // Tentar atualizar por id ou auth_id
     const { data: user, error } = await adminSupabase
       .from('users')
       .update(updateData)
-      .eq('id', userId)
+      .or(`id.eq.${userId},auth_id.eq.${userId}`)
       .select()
       .single();
 
@@ -331,7 +333,7 @@ router.patch('/users/:userId/ban', authenticateUser, authenticateAdmin, async (r
     const { data: existingUser, error: checkError } = await adminSupabase
       .from('users')
       .select('id, email, full_name')
-      .eq('id', userId)
+      .or(`id.eq.${userId},auth_id.eq.${userId}`)
       .single();
 
     if (checkError || !existingUser) {
@@ -348,7 +350,7 @@ router.patch('/users/:userId/ban', authenticateUser, authenticateAdmin, async (r
         ban_reason: reason || 'Banido pelo administrador',
         banned_at: new Date().toISOString()
       })
-      .eq('id', userId)
+      .eq('id', existingUser.id)
       .select()
       .single();
 
@@ -380,7 +382,7 @@ router.delete('/users/:userId', authenticateUser, authenticateAdmin, async (req,
     const { data: existingUser, error: checkError } = await adminSupabase
       .from('users')
       .select('id, email, full_name')
-      .eq('id', userId)
+      .or(`id.eq.${userId},auth_id.eq.${userId}`)
       .single();
 
     if (checkError || !existingUser) {
@@ -394,7 +396,7 @@ router.delete('/users/:userId', authenticateUser, authenticateAdmin, async (req,
     const { error } = await adminSupabase
       .from('users')
       .delete()
-      .eq('id', userId);
+      .eq('id', existingUser.id);
 
     if (error) {
       console.log(`❌ Erro ao excluir usuário: ${error.message}`);
@@ -1603,6 +1605,27 @@ router.get('/analytics', authenticateUser, authenticateAdmin, async (req, res) =
   }
 });
 
+// Delete event (admin-only, bypass RLS)
+router.delete('/events/:id', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { error } = await adminSupabase
+      .from('events')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+
+    return res.json({ success: true, message: 'Event deleted successfully' });
+  } catch (error) {
+    console.error('Admin delete event error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
 // Listar posts do blog (admin) incluindo rascunhos
 router.get('/blog', authenticateUser, authenticateAdmin, async (req, res) => {
@@ -1637,3 +1660,298 @@ router.get('/blog', authenticateUser, authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Listar usuários do auth (Supabase) com metadados incluindo role
+router.get('/auth-users', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { search, role, fetchAll = 'true' } = req.query;
+    const perPage = 1000;
+    let page = 1;
+    let all = [];
+
+    while (true) {
+      const { data, error } = await adminSupabase.auth.admin.listUsers({ page, perPage });
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      const users = Array.isArray(data?.users) ? data.users : [];
+      all.push(...users);
+      const shouldContinue = String(fetchAll).toLowerCase() === 'true' && users.length === perPage;
+      if (!shouldContinue) break;
+      page += 1;
+      if (page > 50) break;
+    }
+
+    let filtered = all;
+    if (search) {
+      const s = String(search).toLowerCase();
+      filtered = filtered.filter(u => (
+        (u.email && u.email.toLowerCase().includes(s)) ||
+        (u.user_metadata?.full_name && String(u.user_metadata.full_name).toLowerCase().includes(s)) ||
+        (u.user_metadata?.username && String(u.user_metadata.username).toLowerCase().includes(s))
+      ));
+    }
+    if (role) {
+      const r = String(role).toLowerCase();
+      filtered = filtered.filter(u => {
+        const ur = u.user_metadata?.role || u.app_metadata?.role;
+        return ur && String(ur).toLowerCase() === r;
+      });
+    }
+
+    const mapped = filtered.map(u => ({
+      id: u.id,
+      email: u.email,
+      full_name: u.user_metadata?.full_name || u.user_metadata?.name || (u.email ? u.email.split('@')[0] : ''),
+      username: u.user_metadata?.username || '',
+      plan: u.user_metadata?.plan || 'gratuito',
+      role: u.user_metadata?.role || u.app_metadata?.role || null,
+      city: u.user_metadata?.city || null,
+      state: u.user_metadata?.state || null,
+      created_at: u.created_at,
+      last_login: u.last_sign_in_at,
+      status: 'active',
+      stats: { checkins: 0, conversations: 0 }
+    }));
+
+    res.json({ users: mapped });
+  } catch (error) {
+    console.error('Auth users list error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Criar usuário no Supabase Auth com metadados e sincronizar em public.users
+router.post('/auth-users', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { email, password, full_name, username, role, plan, city, state } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email e senha são obrigatórios' });
+    }
+
+    const user_metadata = {
+      full_name: full_name || null,
+      username: username || null,
+      role: role || null,
+      plan: plan || 'gratuito',
+      city: city || null,
+      state: state || null,
+    };
+
+    const { data, error } = await adminSupabase.auth.admin.createUser({
+      email,
+      password,
+      user_metadata,
+      email_confirm: true,
+    });
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    const authUser = data?.user;
+    if (!authUser) {
+      return res.status(500).json({ error: 'Falha ao criar usuário no Auth' });
+    }
+
+    // Sincronizar na tabela public.users
+    try {
+      const isAdmin = String(role || '').toLowerCase() === 'admin';
+      const { data: upserted, error: upsertErr } = await adminSupabase
+        .from('users')
+        .upsert({
+          auth_id: authUser.id,
+          email,
+          username: username || null,
+          full_name: full_name || null,
+          plan: plan || 'gratuito',
+          is_admin: isAdmin,
+          city: city || null,
+          state: state || null,
+        }, { onConflict: 'auth_id' })
+        .select();
+      if (upsertErr) {
+        console.warn('Falha ao sincronizar public.users:', upsertErr.message);
+      }
+    } catch (syncErr) {
+      console.warn('Erro ao sincronizar public.users:', syncErr?.message || syncErr);
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: authUser.id,
+        email: authUser.email,
+        full_name: user_metadata.full_name,
+        username: user_metadata.username,
+        role: user_metadata.role,
+        plan: user_metadata.plan,
+        city: user_metadata.city,
+        state: user_metadata.state,
+        created_at: authUser.created_at,
+        last_login: authUser.last_sign_in_at,
+        status: 'active',
+      }
+    });
+  } catch (error) {
+    console.error('Auth user create error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/auth-users/seed-tests', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const overrides = req.body || {};
+    const desired = [
+      {
+        email: overrides.politician_email || 'politico.test@direitai.com',
+        password: overrides.politician_password || 'DireitaAI123!',
+        full_name: overrides.politician_name || 'Político Teste',
+        username: overrides.politician_username || 'politico_teste',
+        role: 'politician',
+        plan: overrides.politician_plan || 'premium',
+        city: overrides.politician_city || 'São Paulo',
+        state: overrides.politician_state || 'SP'
+      },
+      {
+        email: overrides.journalist_email || 'jornalista.test@direitai.com',
+        password: overrides.journalist_password || 'DireitaAI123!',
+        full_name: overrides.journalist_name || 'Jornalista Teste',
+        username: overrides.journalist_username || 'jornalista_teste',
+        role: 'journalist',
+        plan: overrides.journalist_plan || 'premium',
+        city: overrides.journalist_city || 'Rio de Janeiro',
+        state: overrides.journalist_state || 'RJ'
+      },
+      {
+        email: overrides.party_email || 'partido.test@direitai.com',
+        password: overrides.party_password || 'DireitaAI123!',
+        full_name: overrides.party_name || 'Partido Teste',
+        username: overrides.party_username || 'partido_teste',
+        role: 'party',
+        plan: overrides.party_plan || 'premium',
+        city: overrides.party_city || 'Brasília',
+        state: overrides.party_state || 'DF'
+      }
+    ];
+
+    const { data: listData, error: listErr } = await adminSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (listErr) {
+      return res.status(500).json({ error: listErr.message });
+    }
+
+    const existing = Array.isArray(listData?.users) ? listData.users : [];
+    const results = [];
+
+    for (const u of desired) {
+      const found = existing.find(x => x.email && String(x.email).toLowerCase() === String(u.email).toLowerCase());
+      let authUser = found || null;
+      if (!authUser) {
+        const user_metadata = {
+          full_name: u.full_name,
+          username: u.username,
+          role: u.role,
+          plan: u.plan,
+          city: u.city,
+          state: u.state
+        };
+        const { data: created, error: createErr } = await adminSupabase.auth.admin.createUser({
+          email: u.email,
+          password: u.password,
+          user_metadata,
+          email_confirm: true
+        });
+        if (createErr) {
+          results.push({ email: u.email, success: false, error: createErr.message });
+          continue;
+        }
+        authUser = created?.user || null;
+      }
+
+      if (authUser) {
+        await adminSupabase
+          .from('users')
+          .upsert({
+            auth_id: authUser.id,
+            email: u.email,
+            username: u.username,
+            full_name: u.full_name,
+            plan: u.plan,
+            is_admin: false,
+            city: u.city,
+            state: u.state
+          }, { onConflict: 'auth_id' });
+        results.push({
+          email: u.email,
+          password: u.password,
+          role: u.role,
+          plan: u.plan,
+          auth_id: authUser.id
+        });
+      }
+    }
+
+    return res.json({ success: true, users: results });
+  } catch (error) {
+    console.error('Seed test users error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+async function syncAuthUsersHandler(req, res) {
+  try {
+    let page = 1;
+    const perPage = 1000;
+    let totalAuth = 0;
+    let inserted = 0;
+    let updated = 0;
+
+    while (true) {
+      const { data, error } = await adminSupabase.auth.admin.listUsers({ page, perPage });
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      const users = Array.isArray(data?.users) ? data.users : [];
+      totalAuth += users.length;
+      if (users.length === 0) break;
+
+      for (const u of users) {
+        const meta = u.user_metadata || {};
+        const roleMeta = meta.role || u.app_metadata?.role || null;
+        const isAdmin = String(roleMeta || '').toLowerCase() === 'admin';
+        const payload = {
+          auth_id: u.id,
+          email: u.email,
+          username: meta.username || null,
+          full_name: meta.full_name || meta.name || (u.email ? u.email.split('@')[0] : null),
+          plan: meta.plan || 'gratuito',
+          is_admin: isAdmin,
+          city: meta.city || null,
+          state: meta.state || null,
+        };
+
+        const { data: upserted, error: upErr, status } = await adminSupabase
+          .from('users')
+          .upsert(payload, { onConflict: 'auth_id' })
+          .select('auth_id');
+
+        if (upErr) {
+          console.warn('Falha ao sincronizar usuário', u.email, upErr.message);
+          continue;
+        }
+        if (status === 201) inserted += 1; else updated += 1;
+      }
+
+      page += 1;
+      if (page > 50) break;
+    }
+
+    res.json({ success: true, summary: { totalAuth, inserted, updated } });
+  } catch (error) {
+    console.error('Sync auth users error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Endpoints para sincronização (aliases para compatibilidade)
+router.post('/users/sync-auth', authenticateUser, authenticateAdmin, syncAuthUsersHandler);
+router.post('/sync-auth', authenticateUser, authenticateAdmin, syncAuthUsersHandler);

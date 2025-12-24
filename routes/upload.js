@@ -18,8 +18,9 @@ async function uploadToSupabase(file, folder = 'uploads') {
     const filePath = `${folder}/${fileName}`;
 
     // Upload para Supabase Storage usando admin client
+    const bucket = folder === 'avatars' ? 'avatars' : 'images'
     const { data, error } = await adminSupabase.storage
-      .from('images')
+      .from(bucket)
       .upload(filePath, file.buffer, {
         contentType: file.mimetype,
         upsert: false
@@ -32,7 +33,7 @@ async function uploadToSupabase(file, folder = 'uploads') {
 
     // Obter URL pública do arquivo
     const { data: publicUrlData } = adminSupabase.storage
-      .from('images')
+      .from(bucket)
       .getPublicUrl(filePath);
 
     return {
@@ -206,3 +207,43 @@ router.use((error, req, res, next) => {
 });
 
 module.exports = router;
+// Upload de avatar do usuário autenticado
+router.post('/avatar', authenticateUser, upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
+    }
+
+    // Upload para bucket 'avatars'
+    const uploadResult = await uploadToSupabase(req.file, 'avatars');
+
+    // Atualizar avatar_url do usuário (por id ou auth_id)
+    const authId = req.user.auth_id || req.user.id;
+    let { data, error } = await adminSupabase
+      .from('users')
+      .update({ avatar_url: uploadResult.publicUrl, updated_at: new Date().toISOString() })
+      .eq('id', req.user.id)
+      .select();
+
+    if ((!error && Array.isArray(data) && data.length === 0) || (error && error.code === 'PGRST116')) {
+      const upd2 = await adminSupabase
+        .from('users')
+        .update({ avatar_url: uploadResult.publicUrl, updated_at: new Date().toISOString() })
+        .eq('auth_id', authId)
+        .select();
+      data = upd2.data;
+      error = upd2.error;
+    }
+
+    if (error) {
+      console.error('❌ Erro ao atualizar avatar_url:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar avatar do usuário' });
+    }
+
+    const updated = Array.isArray(data) ? (data[0] || null) : data;
+    return res.json({ success: true, avatar_url: uploadResult.publicUrl, profile: updated });
+  } catch (error) {
+    console.error('❌ Erro no upload de avatar:', error);
+    res.status(500).json({ error: 'Erro interno do servidor', message: error.message });
+  }
+});

@@ -50,6 +50,7 @@ const corsOptions = {
     'https://direitai-backend.vercel.app',
     'http://localhost:5120',
     'http://localhost:5121',
+    'http://localhost:5174',
     'http://localhost:5122',
     'http://localhost:5123'
   ],
@@ -96,10 +97,14 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/arenas', require('./routes/arenas'));
+app.use('/api/rankings', require('./routes/rankings'));
+
 app.use('/api/events', require('./routes/events'));
 app.use('/api/checkins', require('./routes/checkins'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/store', require('./routes/store'));
+app.use('/api/admin/docker', require('./routes/docker'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin/content-moderation', require('./routes/contentModeration'));
 app.use('/api/admin/financial', require('./routes/financialReports'));
@@ -121,6 +126,7 @@ app.use('/api/announcements', require('./routes/announcements'));
 app.use('/api/politicians', require('./routes/politicians'));
 app.use('/api/local-politicians', require('./routes/localPoliticians'));
 app.use('/api/agents', require('./routes/agents'));
+app.use('/api/feedback', require('./routes/feedback'));
 app.use('/api/blog', require('./routes/blog'));
 app.use('/api/ratings', require('./routes/ratings'));
 app.use('/api/upload', require('./routes/upload'));
@@ -204,12 +210,19 @@ app.use('*', (req, res) => {
 
 // Para Vercel, não usamos app.listen
 // Só executa app.listen em desenvolvimento local
-if (!process.env.VERCEL && process.env.NODE_ENV !== 'production') {
+console.log('Verificando condições de inicialização:', {
+  VERCEL: process.env.VERCEL,
+  NODE_ENV: process.env.NODE_ENV
+});
+
+if (!process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`🚀 Servidor DireitaAI iniciado!`);
     console.log(`📊 Porta: ${PORT}`);
     console.log(`🔗 Health: http://localhost:${PORT}/health`);
   });
+} else {
+  console.log('⚠️ Servidor não iniciado via app.listen (Ambiente Vercel ou Produção detectado)');
 }
 
 // Graceful shutdown

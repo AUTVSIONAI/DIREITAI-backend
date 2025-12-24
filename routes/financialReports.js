@@ -1,6 +1,8 @@
 const express = require('express')
 const { supabase } = require('../config/supabase');
 const { authenticateUser, authenticateAdmin } = require('../middleware/auth')
+const Stripe = require('stripe')
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
 
 const router = express.Router()
 
@@ -50,6 +52,10 @@ function getPeriodDates(period, startDate, endDate) {
   return { start: start.toISOString(), end: end.toISOString() }
 }
 
+function toEpoch(d) {
+  return Math.floor(new Date(d).getTime() / 1000)
+}
+
 // GET /admin/financial/overview - Visão geral financeira
 router.get('/overview', async (req, res) => {
   try {
@@ -64,7 +70,7 @@ router.get('/overview', async (req, res) => {
       .lt('created_at', end)
       .eq('status', 'completed')
     
-    const totalRevenue = transactions?.reduce((sum, t) => sum + (t.amount || 0), 0) || 0
+    let totalRevenue = transactions?.reduce((sum, t) => sum + (t.amount || 0), 0) || 0
     
     // Calcular crescimento mensal (comparar com período anterior)
     const previousPeriod = getPeriodDates(period, 
@@ -91,7 +97,17 @@ router.get('/overview', async (req, res) => {
     const totalSubscriptions = subscriptions?.length || 0
     
     // Calcular valor médio do pedido
-    const averageOrderValue = transactions?.length > 0 ? totalRevenue / transactions.length : 0
+    let averageOrderValue = transactions?.length > 0 ? totalRevenue / transactions.length : 0
+
+    if (stripe && totalRevenue === 0) {
+      try {
+        const created = { gte: toEpoch(start), lte: toEpoch(end) }
+        const sessions = await stripe.checkout.sessions.list({ limit: 100, created })
+        const list = sessions.data || []
+        totalRevenue = list.reduce((s, x) => s + Number((x.amount_total || 0) / 100), 0)
+        averageOrderValue = list.length ? totalRevenue / list.length : 0
+      } catch {}
+    }
     
     // Calcular taxa de churn (simplificado)
     const { data: canceledSubs } = await supabase
@@ -214,7 +230,26 @@ router.get('/monthly-revenue', async (req, res) => {
       }
     })
     
-    const result = Object.values(monthlyData).slice(-6) // Últimos 6 meses
+    let result = Object.values(monthlyData).slice(-6)
+    if (stripe && result.length === 0) {
+      try {
+        const now = new Date()
+        const startYear = new Date(now.getFullYear(), 0, 1)
+        const created = { gte: toEpoch(startYear.toISOString()), lte: toEpoch(new Date().toISOString()) }
+        const sessions = await stripe.checkout.sessions.list({ limit: 100, created })
+        const buckets = {}
+        for (const s of (sessions.data || [])) {
+          const d = new Date((s.created || 0) * 1000)
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+          const label = d.toLocaleDateString('pt-BR', { month: 'short' })
+          if (!buckets[key]) buckets[key] = { month: label, revenue: 0, subscriptions: 0, orders: 0 }
+          buckets[key].revenue += Number((s.amount_total || 0) / 100)
+          if (s.mode === 'subscription') buckets[key].subscriptions += 1
+          else buckets[key].orders += 1
+        }
+        result = Object.values(buckets).slice(-6)
+      } catch {}
+    }
     res.json(result)
   } catch (error) {
     console.error('Erro ao buscar receita mensal:', error)
@@ -263,14 +298,30 @@ router.get('/top-products', async (req, res) => {
     })
     
     // Ordenar por receita e pegar top 5
-    const result = Object.values(productStats)
+    let result = Object.values(productStats)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5)
       .map(product => ({
         ...product,
         growth: Math.random() * 30 - 10 // Placeholder - implementar cálculo real
       }))
-    
+    if (stripe && result.length === 0) {
+      try {
+        const created = { gte: toEpoch(start), lte: toEpoch(end) }
+        const sessions = await stripe.checkout.sessions.list({ limit: 50, created })
+        const agg = {}
+        for (const s of (sessions.data || [])) {
+          const items = await stripe.checkout.sessions.listLineItems(s.id, { limit: 100 })
+          for (const it of (items.data || [])) {
+            const name = String(it.description || (it.price && it.price.nickname) || 'Item')
+            if (!agg[name]) agg[name] = { name, revenue: 0, units: 0, growth: 0 }
+            agg[name].revenue += Number((it.amount_total || 0) / 100)
+            agg[name].units += Number(it.quantity || 0)
+          }
+        }
+        result = Object.values(agg).sort((a, b) => b.revenue - a.revenue).slice(0, 5)
+      } catch {}
+    }
     res.json(result)
   } catch (error) {
     console.error('Erro ao buscar produtos mais vendidos:', error)
@@ -323,7 +374,7 @@ router.get('/transactions', async (req, res) => {
     
     const { data: transactions, count } = await query
     
-    const formattedTransactions = transactions?.map(transaction => ({
+    let formattedTransactions = transactions?.map(transaction => ({
       id: transaction.id,
       type: transaction.type,
       customer: transaction.users?.name || 'Usuário Desconhecido',
@@ -334,7 +385,24 @@ router.get('/transactions', async (req, res) => {
       date: transaction.created_at,
       method: transaction.payment_method
     })) || []
-    
+    if (stripe && formattedTransactions.length === 0) {
+      try {
+        const created = { gte: toEpoch(start), lte: toEpoch(end) }
+        const sessions = await stripe.checkout.sessions.list({ limit: parseInt(limit), created })
+        const list = sessions.data || []
+        formattedTransactions = list.map(s => ({
+          id: s.id,
+          type: s.mode === 'subscription' ? 'subscription' : 'product',
+          customer: s.customer_details && s.customer_details.name || 'Cliente',
+          plan: undefined,
+          description: s.mode === 'subscription' ? 'Assinatura' : 'Compra',
+          amount: Number((s.amount_total || 0) / 100),
+          status: s.payment_status === 'paid' ? 'completed' : s.payment_status,
+          date: new Date((s.created || 0) * 1000).toISOString(),
+          method: 'card'
+        }))
+      } catch {}
+    }
     res.json({
       transactions: formattedTransactions,
       total: count || 0,
@@ -382,6 +450,19 @@ router.get('/metrics', async (req, res) => {
         metrics.refunds += amount
       }
     })
+    if (stripe && metrics.totalRevenue === 0) {
+      try {
+        const created = { gte: toEpoch(start), lte: toEpoch(end) }
+        const sessions = await stripe.checkout.sessions.list({ limit: 100, created })
+        for (const s of (sessions.data || [])) {
+          const amount = Number((s.amount_total || 0) / 100)
+          metrics.totalRevenue += amount
+          if (s.mode === 'subscription') metrics.recurringRevenue += amount
+          else metrics.oneTimeRevenue += amount
+        }
+        metrics.netRevenue = metrics.totalRevenue - metrics.refunds
+      } catch {}
+    }
     
     metrics.netRevenue = metrics.totalRevenue - metrics.refunds
     

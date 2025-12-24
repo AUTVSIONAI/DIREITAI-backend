@@ -644,12 +644,14 @@ router.post('/', authenticateUser, async (req, res) => {
   }
 });
 
-// Atualizar pesquisa (apenas admin)
+// Atualizar pesquisa (admin ou moderador)
 router.put('/:id', authenticateUser, async (req, res) => {
   try {
-    // Verificar se é admin
-    if (!req.user || req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem editar pesquisas.' });
+    // Verificar se é admin ou moderador
+    const role = req.user?.role;
+    const isAllowed = role === 'admin' || role === 'super_admin' || role === 'moderator';
+    if (!isAllowed) {
+      return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou moderadores podem editar pesquisas.' });
     }
 
     const { id } = req.params;

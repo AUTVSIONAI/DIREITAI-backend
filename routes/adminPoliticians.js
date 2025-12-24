@@ -458,6 +458,53 @@ router.get('/stats/approval', authenticateUser, requireAdmin, async (req, res) =
   }
 });
 
+// Atualizar configurações de voz
+router.put('/:id/voice-config', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { voice_config } = req.body;
+
+    if (!voice_config) {
+      return res.status(400).json({ error: 'voice_config é obrigatório' });
+    }
+
+    // Verificar se o político existe
+    const { data: existing, error: checkError } = await supabase
+      .from('politicians')
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (checkError || !existing) {
+      return res.status(404).json({ error: 'Político não encontrado' });
+    }
+
+    const { data: updated, error } = await supabase
+      .from('politicians')
+      .update({ 
+        voice_config,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Erro ao atualizar configuração de voz:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar configuração de voz' });
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'Configuração de voz atualizada com sucesso'
+    });
+  } catch (error) {
+    console.error('Erro na atualização de voz:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // ===== ROTAS DE SINCRONIZAÇÃO COM APIs EXTERNAS =====
 
 // Verificar se político já existe por ID externo
