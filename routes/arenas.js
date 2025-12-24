@@ -382,3 +382,99 @@ router.post('/:id/chat', authenticateUser, async (req, res) => {
 
 module.exports = router;
 
+// --- PARTICIPANTS ---
+
+// List Participants
+router.get('/:id/participants', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('arena_participants')
+      .select('*, users(id, full_name, avatar_url, role)')
+      .eq('arena_id', id);
+
+    if (error) {
+        // Se a tabela nao existir ainda, retorna vazio
+        if (error.code === '42P01') return res.json([]);
+        throw error;
+    }
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching participants:', error);
+    res.status(500).json({ error: 'Error fetching participants' });
+  }
+});
+
+// Invite User (Admin/Host)
+router.post('/:id/invite', authenticateUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { user_id, role } = req.body;
+    
+    // Check permission (User must be admin or the politician of the arena)
+    if (req.user.role !== 'admin' && req.user.role !== 'politician') {
+        return res.status(403).json({ error: 'Permission denied' });
+    }
+
+    const { data, error } = await adminSupabase
+      .from('arena_participants')
+      .insert({
+        arena_id: id,
+        user_id,
+        role: role || 'guest',
+        status: 'invited'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Error inviting user:', error);
+    res.status(500).json({ error: 'Error inviting user' });
+  }
+});
+
+// Update Status (Accept/Reject)
+router.put('/:id/invite/status', authenticateUser, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body; // 'accepted', 'rejected'
+
+        const { data, error } = await adminSupabase
+            .from('arena_participants')
+            .update({ status })
+            .eq('arena_id', id)
+            .eq('user_id', req.user.id)
+            .select();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error('Error updating invite:', error);
+        res.status(500).json({ error: 'Error updating invite' });
+    }
+});
+
+// Search Users for Invite (Helper route)
+router.get('/users/search', authenticateUser, async (req, res) => {
+    try {
+        const { q } = req.query;
+        if (!q) return res.json([]);
+
+        const { data, error } = await supabase
+            .from('users')
+            .select('id, full_name, avatar_url, role, email')
+            .ilike('full_name', `%${q}%`)
+            .limit(10);
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error('Error searching users:', error);
+        res.status(500).json({ error: 'Error searching users' });
+    }
+});
+
+module.exports = router;
+
