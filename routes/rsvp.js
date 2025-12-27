@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser, authenticateAdmin } = require('../middleware/auth');
 const router = express.Router();
 
@@ -28,7 +28,7 @@ router.post('/events/:eventId', authenticateUser, async (req, res) => {
     }
 
     // Verificar se o evento existe
-    const { data: event, error: eventError } = await supabase
+    const { data: event, error: eventError } = await adminSupabase
       .from('events')
       .select('id, title, status')
       .eq('id', eventId)
@@ -39,7 +39,7 @@ router.post('/events/:eventId', authenticateUser, async (req, res) => {
     }
 
     // Verificar se já existe um RSVP
-    const { data: existingRsvp, error: checkError } = await supabase
+    const { data: existingRsvp, error: checkError } = await adminSupabase
       .from('event_rsvp')
       .select('*')
       .eq('user_id', userId)
@@ -57,7 +57,7 @@ router.post('/events/:eventId', authenticateUser, async (req, res) => {
     let result;
     if (existingRsvp) {
       // Atualizar RSVP existente
-      const { data: rsvp, error: rsvpError } = await supabase
+      const { data: rsvp, error: rsvpError } = await adminSupabase
         .from('event_rsvp')
         .update(rsvpData)
         .eq('id', existingRsvp.id)
@@ -70,7 +70,7 @@ router.post('/events/:eventId', authenticateUser, async (req, res) => {
       result = rsvp;
     } else {
       // Criar novo RSVP
-      const { data: rsvp, error: rsvpError } = await supabase
+      const { data: rsvp, error: rsvpError } = await adminSupabase
         .from('event_rsvp')
         .insert([rsvpData])
         .select()
@@ -99,7 +99,7 @@ router.post('/events/:eventId', authenticateUser, async (req, res) => {
       const { eventId } = req.params;
       const userId = req.user.auth_id; // Usar auth_id para foreign key com auth.users(id)
       
-      const { data: rsvp, error } = await supabase
+      const { data: rsvp, error } = await adminSupabase
       .from('event_rsvp')
       .select('*')
       .eq('user_id', userId)
@@ -129,7 +129,7 @@ router.get('/events/:eventId/stats', async (req, res) => {
     const { eventId } = req.params;
 
     // Contar RSVPs por status
-    const { data: rsvpStats, error } = await supabase
+    const { data: rsvpStats, error } = await adminSupabase
       .from('event_rsvp')
       .select('status')
       .eq('event_id', eventId);
@@ -166,9 +166,9 @@ router.get('/events/:eventId/stats', async (req, res) => {
 router.delete('/events/:eventId', authenticateUser, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.auth_id;
 
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('event_rsvp')
       .delete()
       .eq('user_id', userId)
@@ -211,7 +211,7 @@ router.post('/manifestations/:manifestationId', authenticateUser, async (req, re
     }
 
     // Verificar se a manifestação existe
-    const { data: manifestation, error: manifestationError } = await supabase
+    const { data: manifestation, error: manifestationError } = await adminSupabase
       .from('manifestations')
       .select('id, name, status')
       .eq('id', manifestationId)
@@ -222,7 +222,7 @@ router.post('/manifestations/:manifestationId', authenticateUser, async (req, re
     }
 
     // Verificar se já existe um RSVP
-    const { data: existingRsvp, error: checkError } = await supabase
+    const { data: existingRsvp, error: checkError } = await adminSupabase
       .from('manifestation_rsvp')
       .select('*')
       .eq('user_id', userId)
@@ -240,7 +240,7 @@ router.post('/manifestations/:manifestationId', authenticateUser, async (req, re
     let result;
     if (existingRsvp) {
       // Atualizar RSVP existente
-      const { data: rsvp, error: rsvpError } = await supabase
+      const { data: rsvp, error: rsvpError } = await adminSupabase
         .from('manifestation_rsvp')
         .update(rsvpData)
         .eq('id', existingRsvp.id)
@@ -253,7 +253,7 @@ router.post('/manifestations/:manifestationId', authenticateUser, async (req, re
       result = rsvp;
     } else {
       // Criar novo RSVP
-      const { data: rsvp, error: rsvpError } = await supabase
+      const { data: rsvp, error: rsvpError } = await adminSupabase
         .from('manifestation_rsvp')
         .insert([rsvpData])
         .select()
@@ -303,7 +303,7 @@ router.get('/manifestations/:manifestationId/participants', authenticateUser, au
     }
 
     // Primeiro buscar os RSVPs
-    let rsvpQuery = supabase
+    let rsvpQuery = adminSupabase
       .from('manifestation_rsvp')
       .select('*', { count: 'exact' })
       .eq('manifestation_id', manifestationId)
@@ -330,7 +330,7 @@ router.get('/manifestations/:manifestationId/participants', authenticateUser, au
 
     let users = [];
     if (userIds.length > 0) {
-      const { data: usersData, error: usersError } = await supabase
+      const { data: usersData, error: usersError } = await adminSupabase
         .from('users')
         .select('auth_id, full_name, username, email, avatar_url')
         .in('auth_id', userIds);
@@ -376,7 +376,7 @@ router.get('/manifestations/:manifestationId/participants', authenticateUser, au
       const { manifestationId } = req.params;
       const userId = req.user.auth_id; // Usar auth_id para foreign key com auth.users(id)
       
-      const { data: rsvp, error } = await supabase
+      const { data: rsvp, error } = await adminSupabase
       .from('manifestation_rsvp')
       .select('*')
       .eq('user_id', userId)
@@ -406,7 +406,7 @@ router.get('/manifestations/:manifestationId/stats', async (req, res) => {
     const { manifestationId } = req.params;
 
     // Contar RSVPs por status
-    const { data: rsvpStats, error } = await supabase
+    const { data: rsvpStats, error } = await adminSupabase
       .from('manifestation_rsvp')
       .select('status')
       .eq('manifestation_id', manifestationId);
@@ -443,9 +443,9 @@ router.get('/manifestations/:manifestationId/stats', async (req, res) => {
 router.delete('/manifestations/:manifestationId', authenticateUser, async (req, res) => {
   try {
     const { manifestationId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.auth_id;
 
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('manifestation_rsvp')
       .delete()
       .eq('user_id', userId)
@@ -478,7 +478,7 @@ router.get('/events/:eventId/participants', authenticateUser, authenticateAdmin,
     const offset = (page - 1) * limit;
 
     // Primeiro buscar os RSVPs
-    let rsvpQuery = supabase
+    let rsvpQuery = adminSupabase
       .from('event_rsvp')
       .select('*')
       .eq('event_id', eventId)
@@ -499,7 +499,7 @@ router.get('/events/:eventId/participants', authenticateUser, authenticateAdmin,
     const userIds = rsvps?.map(rsvp => rsvp.user_id) || [];
     console.log('🔍 DEBUG: User IDs para buscar:', userIds);
     
-    const { data: users, error: usersError } = await supabase
+    const { data: users, error: usersError } = await adminSupabase
       .from('users')
       .select('auth_id, id, username, full_name, email, avatar_url')
       .in('auth_id', userIds);
@@ -543,11 +543,11 @@ router.get('/events/:eventId/participants', authenticateUser, authenticateAdmin,
  */
 router.get('/user/events', authenticateUser, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.auth_id;
     const { status, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = supabase
+    let query = adminSupabase
       .from('event_rsvp')
       .select(`
         *,
@@ -596,11 +596,11 @@ router.get('/user/events', authenticateUser, async (req, res) => {
  */
 router.get('/user/manifestations', authenticateUser, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.auth_id;
     const { status, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = supabase
+    let query = adminSupabase
       .from('manifestation_rsvp')
       .select(`
         *,
