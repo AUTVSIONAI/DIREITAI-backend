@@ -100,9 +100,17 @@ router.get('/admin', authenticateUser, authenticateAdmin, async (req, res) => {
           .select('*', { count: 'exact', head: true })
           .eq('manifestation_id', manifestation.id);
 
+        // Buscar contagem de RSVPs (presenças confirmadas)
+        const { count: rsvpCount } = await adminSupabase
+          .from('manifestation_rsvp')
+          .select('*', { count: 'exact', head: true })
+          .eq('manifestation_id', manifestation.id)
+          .eq('status', 'confirmed');
+
         return {
           ...manifestation,
-          checkin_count: checkinCount || 0
+          checkin_count: checkinCount || 0,
+          rsvp_count: rsvpCount || 0
         };
       })
     );
