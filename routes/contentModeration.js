@@ -49,15 +49,8 @@ router.get('/pending', async (req, res) => {
     let query = supabase
       .from('content_moderation')
       .select(`
-        id,
-        title,
-        created_at,
-        author_id,
-        status,
-        content_type,
-        priority,
-        reports_count,
-        users!content_moderation_author_id_fkey(username, subscription_plan)
+        *,
+        users!author_id(username, subscription_plan)
       `)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
@@ -93,10 +86,14 @@ router.get('/pending', async (req, res) => {
     // Buscar mensagens para cada conversa
     const contentWithMessages = await Promise.all(
       conversations.map(async (conv) => {
+        // Determine the target ID (could be target_id, content_id, or id depending on schema)
+        // Assuming target_id or content_id holds the reference to the actual conversation/content
+        const targetId = conv.target_id || conv.content_id || conv.id;
+        
         const { data: messages } = await supabase
           .from('ai_messages')
           .select('content, role')
-          .eq('conversation_id', conv.id)
+          .eq('conversation_id', targetId)
           .order('created_at', { ascending: true })
 
         const lastUserMessage = messages?.find(m => m.role === 'user')?.content || ''
@@ -165,7 +162,7 @@ router.get('/approved', async (req, res) => {
         priority,
         moderated_at,
         moderator_id,
-        users!content_moderation_author_id_fkey(username, subscription_plan)
+        users!author_id(username, subscription_plan)
       `)
       .eq('status', 'approved')
       .order('moderated_at', { ascending: false })
@@ -253,7 +250,7 @@ router.get('/rejected', async (req, res) => {
         moderated_at,
         moderator_id,
         reason,
-        users!content_moderation_author_id_fkey(username, subscription_plan)
+        users!author_id(username, subscription_plan)
       `)
       .eq('status', 'rejected')
       .order('moderated_at', { ascending: false })

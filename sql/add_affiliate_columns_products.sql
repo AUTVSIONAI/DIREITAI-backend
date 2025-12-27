@@ -1,0 +1,3 @@
+ALTER TABLE products 
+ADD COLUMN IF NOT EXISTS affiliate_enabled BOOLEAN DEFAULT true,
+ADD COLUMN IF NOT EXISTS affiliate_rate_percent NUMERIC DEFAULT 10;

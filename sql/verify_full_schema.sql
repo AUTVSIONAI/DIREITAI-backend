@@ -1,40 +1,150 @@
--- Script de verificação e criação de tabelas/colunas faltantes
--- Rode este script no Editor SQL do Supabase para garantir que tudo funcione
-
--- 1. Tabela de Chat Público
-CREATE TABLE IF NOT EXISTS arena_chat_messages (
+-- Ensure content_moderation table exists
+CREATE TABLE IF NOT EXISTS content_moderation (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  arena_id UUID NOT NULL REFERENCES arenas(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  content TEXT NOT NULL,
-  is_highlighted BOOLEAN DEFAULT FALSE,
+  title TEXT,
+  author_id UUID REFERENCES auth.users(id),
+  status VARCHAR(20) DEFAULT 'pending', -- pending, approved, rejected
+  content_type VARCHAR(20) DEFAULT 'text',
+  priority VARCHAR(20) DEFAULT 'medium',
+  reports_count INT DEFAULT 0,
+  moderated_at TIMESTAMPTZ,
+  moderator_id UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  ai_template JSONB
+);
+
+-- Ensure ai_messages table exists (referenced in contentModeration.js)
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id UUID REFERENCES content_moderation(id), -- Assuming conversation_id links here or to another table
+  content TEXT,
+  role VARCHAR(20),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Índices do Chat
-CREATE INDEX IF NOT EXISTS idx_arena_chat_arena_id ON arena_chat_messages(arena_id);
-CREATE INDEX IF NOT EXISTS idx_arena_chat_created_at ON arena_chat_messages(created_at);
+-- Ensure content_reports table exists
+CREATE TABLE IF NOT EXISTS content_reports (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  content_id UUID,
+  content_type VARCHAR(20),
+  reporter_id UUID REFERENCES auth.users(id),
+  reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- RLS do Chat
-ALTER TABLE arena_chat_messages ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Public read chat" ON arena_chat_messages;
-CREATE POLICY "Public read chat" ON arena_chat_messages FOR SELECT USING (true);
-DROP POLICY IF EXISTS "Authenticated insert chat" ON arena_chat_messages;
-CREATE POLICY "Authenticated insert chat" ON arena_chat_messages FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+-- Ensure announcements table exists
+CREATE TABLE IF NOT EXISTS announcements (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  type VARCHAR(20) DEFAULT 'info',
+  target_audience JSONB DEFAULT '{"type": "all"}',
+  start_date TIMESTAMPTZ,
+  end_date TIMESTAMPTZ,
+  active BOOLEAN DEFAULT true,
+  priority VARCHAR(20) DEFAULT 'medium',
+  action_label TEXT,
+  action_url TEXT,
+  dismiss_count INT DEFAULT 0,
+  click_count INT DEFAULT 0,
+  view_count INT DEFAULT 0,
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- 2. Colunas de Vínculo Usuário-Político
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS politician_id UUID REFERENCES public.politicians(id);
-ALTER TABLE public.politicians ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.users(id);
+-- Ensure announcement_dismissals table exists
+CREATE TABLE IF NOT EXISTS announcement_dismissals (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  announcement_id UUID REFERENCES announcements(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(announcement_id, user_id)
+);
 
--- 3. Colunas de Ranking
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0;
-ALTER TABLE public.politicians ADD COLUMN IF NOT EXISTS popularity_score INTEGER DEFAULT 0;
+-- Ensure notifications table exists
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  type VARCHAR(20) NOT NULL,
+  category VARCHAR(20) NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  short_message TEXT,
+  icon VARCHAR(50),
+  image_url TEXT,
+  priority VARCHAR(20) DEFAULT 'medium',
+  data JSONB,
+  action_url TEXT,
+  action_label TEXT,
+  is_read BOOLEAN DEFAULT false,
+  is_clicked BOOLEAN DEFAULT false,
+  is_dismissed BOOLEAN DEFAULT false,
+  expires_at TIMESTAMPTZ,
+  scheduled_for TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ DEFAULT NOW(),
+  read_at TIMESTAMPTZ,
+  clicked_at TIMESTAMPTZ,
+  dismissed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- 4. Correção de permissões para ranking (opcional, mas recomendado)
--- Permite leitura pública de pontos (se já não estiver permitido)
--- (O backend agora usa adminSupabase, então isso é menos crítico, mas bom para consistência)
+-- Ensure notification_templates table exists
+CREATE TABLE IF NOT EXISTS notification_templates (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  type VARCHAR(20) NOT NULL,
+  category VARCHAR(20) NOT NULL,
+  title_template TEXT NOT NULL,
+  message_template TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- 5. Atualização de dados de exemplo (opcional)
--- Garante que alguns usuários tenham pontos para aparecer no ranking
-UPDATE public.users SET points = FLOOR(RANDOM() * 1000) WHERE points IS NULL OR points = 0;
-UPDATE public.politicians SET popularity_score = FLOOR(RANDOM() * 1000) WHERE popularity_score IS NULL OR popularity_score = 0;
+-- Fix permissions (grant access to authenticated users if needed, or rely on service_role in backend)
+-- For backend, we use service_role usually, but RLS might block if not careful.
+-- Enabling RLS and adding policies is good practice.
+
+ALTER TABLE content_moderation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Admins can do everything
+CREATE POLICY "Admins all access content_moderation" ON content_moderation FOR ALL TO authenticated USING (
+  EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
+);
+
+-- Policy: Users can view announcements
+CREATE POLICY "Users view active announcements" ON announcements FOR SELECT TO authenticated USING (active = true);
+
+-- Policy: Users can view their own notifications
+CREATE POLICY "Users view own notifications" ON notifications FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+-- Create RPC functions for counters if they don't exist
+CREATE OR REPLACE FUNCTION increment_announcement_view(announcement_id_input UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE announcements
+  SET view_count = view_count + 1
+  WHERE id = announcement_id_input;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION increment_announcement_click(announcement_id_input UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE announcements
+  SET click_count = click_count + 1
+  WHERE id = announcement_id_input;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION increment_announcement_dismiss(announcement_id_input UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE announcements
+  SET dismiss_count = dismiss_count + 1
+  WHERE id = announcement_id_input;
+END;
+$$ LANGUAGE plpgsql;

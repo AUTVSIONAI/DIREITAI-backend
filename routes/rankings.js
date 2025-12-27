@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { adminSupabase } = require('../config/supabase');
 
+// Debug route
+router.get('/', (req, res) => {
+    res.json({ status: 'Rankings route active', timestamp: new Date() });
+});
+
 // --- USER RANKING ---
 router.get('/users', async (req, res) => {
   try {
@@ -50,22 +55,36 @@ router.get('/politicians', async (req, res) => {
     // We use popularity_score for ranking
     const { limit = 50 } = req.query;
 
+    // Fetch all approved politicians with their points to calculate ranking
+    // Note: Fetching all to sort in memory because points are calculated from a related table.
+    // Optimization needed if dataset grows large (e.g., materialized view or counter cache column).
     const { data, error } = await adminSupabase
       .from('politicians')
-      .select('id, name, party, state, photo_url, popularity_score')
-      .order('popularity_score', { ascending: false })
-      .limit(limit);
+      .select('id, name, party, state, photo_url, politician_points(points)')
+      .eq('is_approved', true)
+      .eq('is_active', true);
 
     if (error) throw error;
 
-    const formatted = data.map((p, index) => ({
+    // Calculate total points and sort
+    const rankedData = data
+      .map(p => ({
+        ...p,
+        totalPoints: p.politician_points 
+          ? p.politician_points.reduce((sum, item) => sum + item.points, 0) 
+          : 0
+      }))
+      .sort((a, b) => b.totalPoints - a.totalPoints)
+      .slice(0, parseInt(limit));
+
+    const formatted = rankedData.map((p, index) => ({
         id: index + 1,
         politicianId: p.id,
         name: p.name,
         party: p.party,
         state: p.state,
         photo_url: p.photo_url,
-        points: p.popularity_score || 0
+        points: p.totalPoints
     }));
 
     res.json(formatted);

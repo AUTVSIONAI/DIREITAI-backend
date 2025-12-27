@@ -370,12 +370,58 @@ async function saveConversation(userId, conversationId, userMessage, aiResponse,
     if (conversationError) {
       console.error('Error saving conversation:', conversationError);
     } else {
-      console.log('✅ Conversa salva com sucesso');
+      console.log('✅ Conversa salva com sucesso em ai_conversations');
     }
 
-    // Nota: A tabela ai_messages parece não ter a estrutura esperada
-    // Vamos comentar por enquanto até verificarmos a estrutura correta
-    console.log('⚠️ Tabela ai_messages não tem estrutura compatível - pulando salvamento de mensagens individuais');
+    // Tentar salvar na nova estrutura (v2) para compatibilidade futura
+    try {
+      // 1. Garantir que a conversa existe na tabela pai (ai_conversations_v2)
+      const { data: existingConv } = await adminSupabase
+        .from('ai_conversations_v2')
+        .select('id')
+        .eq('id', conversationId)
+        .single();
+
+      if (!existingConv) {
+        // Criar nova conversa v2
+        await adminSupabase.from('ai_conversations_v2').insert({
+          id: conversationId,
+          user_id: userId,
+          title: userMessage.substring(0, 50) + (userMessage.length > 50 ? '...' : ''),
+          updated_at: new Date().toISOString()
+        });
+      } else {
+        // Atualizar timestamp
+        await adminSupabase.from('ai_conversations_v2')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', conversationId);
+      }
+
+      // 2. Salvar mensagens individuais em ai_messages
+      const { error: messagesError } = await adminSupabase
+        .from('ai_messages')
+        .insert([
+          {
+            conversation_id: conversationId,
+            role: 'user',
+            content: userMessage
+          },
+          {
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: aiResponse
+          }
+        ]);
+
+      if (messagesError) {
+        console.error('⚠️ Erro ao salvar mensagens em ai_messages:', messagesError);
+      } else {
+        console.log('✅ Mensagens salvas com sucesso em ai_messages (v2)');
+      }
+    } catch (v2Error) {
+      console.error('⚠️ Erro no fluxo v2 de salvamento:', v2Error);
+      // Não falhar o request se o fluxo v2 der erro, pois o v1 já salvou
+    }
 
     return {
       success: true

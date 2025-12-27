@@ -16,6 +16,94 @@ const getSupabase = () => global.supabase || {
   })
 };
 
+// Get all notifications (Admin)
+router.get('/notifications', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { read, priority, search, limit = 20, offset = 0 } = req.query;
+
+    let query = adminSupabase
+      .from('notifications')
+      .select(`
+        *,
+        users (
+          username,
+          email
+        )
+      `, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+
+    if (read !== undefined) {
+      query = query.eq('is_read', read === 'true');
+    }
+
+    if (priority) {
+      query = query.eq('priority', priority);
+    }
+
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,message.ilike.%${search}%`);
+    }
+
+    const { data: notifications, count, error } = await query;
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Get unread count
+    const { count: unreadCount } = await adminSupabase
+      .from('notifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_read', false);
+
+    res.json({
+      notifications,
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / parseInt(limit)),
+      unreadCount: unreadCount || 0
+    });
+  } catch (error) {
+    console.error('Get admin notifications error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Mark notification as read (Admin)
+router.patch('/notifications/:id/read', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Mark notification read error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Mark all notifications as read (Admin)
+router.patch('/notifications/read-all', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { error } = await adminSupabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('is_read', false);
+
+    if (error) throw error;
+    res.json({ message: 'All notifications marked as read' });
+  } catch (error) {
+    console.error('Mark all notifications read error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Dashboard overview statistics
 router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) => {
   try {

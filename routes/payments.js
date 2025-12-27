@@ -117,6 +117,16 @@ const CREDIT_PACKAGES = {
   ],
 };
 
+// Listar planos
+router.get('/plans', (req, res) => {
+    // Converter objeto PLANS para array
+    const plansList = Object.keys(PLANS).map(key => ({
+        id: key,
+        ...PLANS[key]
+    }));
+    res.json(plansList);
+});
+
 // Endpoint para criar sessão de checkout (Assinaturas)
 router.post('/checkout', authenticateUser, async (req, res) => {
   try {

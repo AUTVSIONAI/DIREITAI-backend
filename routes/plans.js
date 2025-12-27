@@ -1,5 +1,6 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
+const { authenticateUser, authenticateAdmin } = require('../middleware/auth');
 const router = express.Router();
 
 // Flag para usar dados mock (temporário até a tabela ser criada)
@@ -63,36 +64,109 @@ const getMockPlans = () => [
   }
 ];
 
-// Middleware para verificar se é admin
-const requireAdmin = async (req, res, next) => {
+// POST /api/plans/seed-b2b - Semear planos B2B
+router.post('/seed-b2b', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, error: 'Token não fornecido' });
+    console.log('🌱 Semeando planos B2B...');
+    
+    const b2bPlans = [
+      {
+        name: 'Plano Político',
+        slug: 'politico',
+        description: 'Plano exclusivo para políticos com ferramentas de análise de sentimento e monitoramento.',
+        price_monthly: 299.90,
+        price_yearly: 2999.00,
+        features: ['Monitoramento de Redes', 'Análise de Sentimento', 'Relatórios Diários', 'Suporte Dedicado'],
+        limits: {
+          ai_conversations: -1,
+          fake_news_analyses: -1,
+          monitoring_keywords: 10
+        },
+        is_active: true,
+        is_popular: false,
+        sort_order: 10,
+        color: 'purple',
+        icon: 'Landmark'
+      },
+      {
+        name: 'Plano Jornalista',
+        slug: 'jornalista',
+        description: 'Ferramentas avançadas de verificação de fatos e pesquisa para jornalistas.',
+        price_monthly: 149.90,
+        price_yearly: 1499.00,
+        features: ['Verificação de Fatos Prioritária', 'Acesso a Fontes Confiáveis', 'Exportação de Dados'],
+        limits: {
+          ai_conversations: -1,
+          fake_news_analyses: -1,
+          searches_daily: 500
+        },
+        is_active: true,
+        is_popular: false,
+        sort_order: 11,
+        color: 'blue',
+        icon: 'Newspaper'
+      },
+      {
+        name: 'Plano Partido',
+        slug: 'partido',
+        description: 'Solução completa para partidos políticos com gestão de múltiplos perfis.',
+        price_monthly: 999.90,
+        price_yearly: 9999.00,
+        features: ['Gestão de Múltiplos Perfis', 'Análise de Tendências', 'Estratégia de Conteúdo', 'API de Integração'],
+        limits: {
+          ai_conversations: -1,
+          fake_news_analyses: -1,
+          sub_accounts: 50
+        },
+        is_active: true,
+        is_popular: false,
+        sort_order: 12,
+        color: 'red',
+        icon: 'Flag'
+      }
+    ];
+
+    const results = [];
+    
+    for (const plan of b2bPlans) {
+      // Verificar se já existe
+      const { data: existing } = await adminSupabase
+        .from('subscription_plans')
+        .select('id')
+        .eq('slug', plan.slug)
+        .single();
+        
+      if (existing) {
+        console.log(`ℹ️ Plano ${plan.name} já existe. Atualizando...`);
+        const { data, error } = await adminSupabase
+          .from('subscription_plans')
+          .update(plan)
+          .eq('id', existing.id)
+          .select()
+          .single();
+          
+        if (error) throw error;
+        results.push(data);
+      } else {
+        console.log(`✨ Criando plano ${plan.name}...`);
+        const { data, error } = await adminSupabase
+          .from('subscription_plans')
+          .insert(plan)
+          .select()
+          .single();
+          
+        if (error) throw error;
+        results.push(data);
+      }
     }
 
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (error || !user) {
-      return res.status(401).json({ success: false, error: 'Token inválido' });
-    }
-
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('is_admin')
-      .eq('auth_id', user.id)
-      .single();
-
-    if (userError || !userData?.is_admin) {
-      return res.status(403).json({ success: false, error: 'Acesso negado. Apenas administradores.' });
-    }
-
-    req.user = user;
-    next();
+    console.log('✅ Planos B2B semeados com sucesso!');
+    res.json({ success: true, data: results });
   } catch (error) {
-    console.error('Erro na verificação de admin:', error);
-    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+    console.error('❌ Erro ao semear planos B2B:', error);
+    res.status(500).json({ success: false, error: 'Erro ao semear planos B2B: ' + error.message });
   }
-};
+});
 
 // GET /api/plans - Listar todos os planos (público)
 router.get('/', async (req, res) => {
@@ -122,14 +196,15 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/plans/admin - Listar todos os planos para admin (incluindo inativos)
-router.get('/admin', requireAdmin, async (req, res) => {
+router.get('/admin', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     if (USE_MOCK_DATA) {
       const plans = getMockPlans();
       return res.json({ success: true, data: plans });
     }
 
-    const { data: plans, error } = await supabase
+    // Usar adminSupabase para garantir acesso total
+    const { data: plans, error } = await adminSupabase
       .from('subscription_plans')
       .select('*')
       .order('sort_order', { ascending: true })
@@ -140,6 +215,11 @@ router.get('/admin', requireAdmin, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Erro ao buscar planos' });
     }
 
+    console.log(`📦 Admin Plans fetched: ${plans?.length || 0}`);
+    if (plans.length > 0) {
+      console.log('📋 First plan:', plans[0].name);
+    }
+    
     res.json({ success: true, data: plans });
   } catch (error) {
     console.error('Erro ao buscar planos (admin):', error);
@@ -179,7 +259,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/plans - Criar novo plano (admin)
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const {
       name,
@@ -193,7 +273,6 @@ router.post('/', requireAdmin, async (req, res) => {
       limits,
       is_active = true,
       is_popular = false,
-      is_visible = true,
       sort_order = 0,
       color = 'blue',
       icon = 'Package'
@@ -230,7 +309,7 @@ router.post('/', requireAdmin, async (req, res) => {
       return res.status(201).json({ success: true, data: plan });
     }
 
-    const { data: plan, error } = await supabase
+    const { data: plan, error } = await adminSupabase
       .from('subscription_plans')
       .insert({
         name,
@@ -268,7 +347,7 @@ router.post('/', requireAdmin, async (req, res) => {
 });
 
 // PUT /api/plans/:id - Atualizar plano (admin)
-router.put('/:id', requireAdmin, async (req, res) => {
+router.put('/:id', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -283,7 +362,6 @@ router.put('/:id', requireAdmin, async (req, res) => {
       limits,
       is_active,
       is_popular,
-      is_visible,
       sort_order,
       color,
       icon
@@ -316,7 +394,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       return res.json({ success: true, data: plan });
     }
 
-    const { data: plan, error } = await supabase
+    const { data: plan, error } = await adminSupabase
       .from('subscription_plans')
       .update(updateData)
       .eq('id', id)
@@ -343,7 +421,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/plans/:id - Deletar plano (admin)
-router.delete('/:id', requireAdmin, async (req, res) => {
+router.delete('/:id', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -356,7 +434,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     }
 
     // Verificar se existem usuários usando este plano
-    const { data: users, error: usersError } = await supabase
+    const { data: users, error: usersError } = await adminSupabase
       .from('users')
       .select('id')
       .eq('plan', id)
@@ -374,7 +452,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       });
     }
 
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('subscription_plans')
       .delete()
       .eq('id', id);
@@ -392,7 +470,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/plans/:id/toggle - Ativar/Desativar plano (admin)
-router.patch('/:id/toggle', requireAdmin, async (req, res) => {
+router.patch('/:id/toggle', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -413,7 +491,7 @@ router.patch('/:id/toggle', requireAdmin, async (req, res) => {
     }
 
     // Buscar o plano atual
-    const { data: currentPlan, error: fetchError } = await supabase
+    const { data: currentPlan, error: fetchError } = await adminSupabase
       .from('subscription_plans')
       .select('is_active')
       .eq('id', id)
@@ -424,7 +502,7 @@ router.patch('/:id/toggle', requireAdmin, async (req, res) => {
     }
 
     // Alternar o status
-    const { data: updatedPlan, error } = await supabase
+    const { data: updatedPlan, error } = await adminSupabase
       .from('subscription_plans')
       .update({ is_active: !currentPlan.is_active })
       .eq('id', id)
@@ -459,7 +537,7 @@ router.patch('/:id/visibility', requireAdmin, async (req, res) => {
 */
 
 // PATCH /api/plans/:id/reorder - Reordenar plano
-router.patch('/:id/reorder', requireAdmin, async (req, res) => {
+router.patch('/:id/reorder', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { direction } = req.body; // 'up' ou 'down'
@@ -489,7 +567,7 @@ router.patch('/:id/reorder', requireAdmin, async (req, res) => {
     }
 
     // Buscar o plano atual
-    const { data: currentPlan, error: fetchError } = await supabase
+    const { data: currentPlan, error: fetchError } = await adminSupabase
       .from('subscription_plans')
       .select('sort_order')
       .eq('id', id)
@@ -505,7 +583,7 @@ router.patch('/:id/reorder', requireAdmin, async (req, res) => {
     const finalOrder = Math.max(0, newOrder);
 
     // Atualizar a ordem
-    const { data: updatedPlan, error } = await supabase
+    const { data: updatedPlan, error } = await adminSupabase
       .from('subscription_plans')
       .update({ sort_order: finalOrder })
       .eq('id', id)
@@ -528,9 +606,132 @@ router.patch('/:id/reorder', requireAdmin, async (req, res) => {
   }
 });
 
+// POST /api/plans/seed-b2b - Semear planos B2B (admin)
+/* 
+// Rota duplicada e inativa (já definida no início do arquivo)
+router.post('/seed-b2b', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const b2bPlans = [
+      {
+        name: 'Empresarial Start',
+
+        slug: 'empresarial-start',
+        description: 'Ideal para pequenas equipes e startups',
+        price_monthly: 199.90,
+        price_yearly: 1999.00,
+        features: [
+          'Até 5 usuários',
+          'Painel administrativo',
+          'Relatórios básicos',
+          'Suporte por email'
+        ],
+        limits: {
+          users_limit: 5,
+          ai_conversations: 500,
+          fake_news_analyses: 100
+        },
+        is_active: true,
+        is_visible: true,
+        is_popular: false,
+        sort_order: 10,
+        color: 'blue',
+        icon: 'Briefcase'
+      },
+      {
+        name: 'Empresarial Pro',
+        slug: 'empresarial-pro',
+        description: 'Para empresas em crescimento',
+        price_monthly: 499.90,
+        price_yearly: 4999.00,
+        features: [
+          'Até 20 usuários',
+          'Painel administrativo avançado',
+          'Relatórios detalhados',
+          'Suporte prioritário',
+          'API de integração (básico)'
+        ],
+        limits: {
+          users_limit: 20,
+          ai_conversations: 2000,
+          fake_news_analyses: 500
+        },
+        is_active: true,
+        is_visible: true,
+        is_popular: true,
+        sort_order: 11,
+        color: 'indigo',
+        icon: 'Building'
+      },
+      {
+        name: 'Empresarial Elite',
+        slug: 'empresarial-elite',
+        description: 'Solução completa para grandes organizações',
+        price_monthly: 999.90,
+        price_yearly: 9999.00,
+        features: [
+          'Usuários ilimitados',
+          'Gestão multi-nível',
+          'Relatórios personalizados',
+          'Gerente de conta dedicado',
+          'API completa'
+        ],
+        limits: {
+          users_limit: -1,
+          ai_conversations: -1,
+          fake_news_analyses: -1
+        },
+        is_active: true,
+        is_visible: true,
+        is_popular: false,
+        sort_order: 12,
+        color: 'purple',
+        icon: 'Globe'
+      }
+    ];
+
+    const results = [];
+    
+    for (const plan of b2bPlans) {
+      // Verificar se já existe
+      const { data: existing } = await supabase
+        .from('subscription_plans')
+        .select('id')
+        .eq('slug', plan.slug)
+        .single();
+        
+      if (!existing) {
+        const { data, error } = await supabase
+          .from('subscription_plans')
+          .insert(plan)
+          .select()
+          .single();
+          
+        if (error) {
+          console.error(`Erro ao criar plano ${plan.name}:`, error);
+        } else {
+          results.push(data);
+        }
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      message: `${results.length} planos B2B criados com sucesso`,
+      data: results 
+    });
+  } catch (error) {
+    console.error('Erro ao semear planos B2B:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+*/
+
 module.exports = router;
 
-router.post('/seed-b2b', requireAdmin, async (req, res) => {
+// POST /api/plans/seed-b2b - Semear planos B2B (admin)
+/* 
+// Rota duplicada e inativa (já definida no início do arquivo)
+router.post('/seed-b2b', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const entries = [
       {
@@ -635,3 +836,4 @@ router.post('/seed-b2b', requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: 'Erro interno do servidor' });
   }
 });
+*/

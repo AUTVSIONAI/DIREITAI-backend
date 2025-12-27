@@ -161,7 +161,7 @@ router.get('/achievements', async (req, res) => {
 router.use(authenticateUser);
 
 // GET /gamification/users/:userId/stats - Estatísticas de gamificação do usuário
-router.get('/users/:userId/stats', async (req, res) => {
+router.get('/users/:userId/stats', authenticateUser, async (req, res) => {
   try {
     const { userId } = req.params;
     
@@ -217,7 +217,7 @@ router.get('/users/:userId/stats', async (req, res) => {
 });
 
 // GET /gamification/users/:userId/activities - Atividades recentes do usuário
-router.get('/users/:userId/activities', async (req, res) => {
+router.get('/users/:userId/activities', authenticateUser, async (req, res) => {
   try {
     const { userId } = req.params;
     const { limit = 10 } = req.query;
@@ -396,7 +396,7 @@ router.get('/users/:userId/points', async (req, res) => {
 });
 
 // POST /gamification/users/:userId/points/add - Adicionar pontos ao usuário
-router.post('/users/:userId/points/add', async (req, res) => {
+router.post('/users/:userId/points/add', authenticateUser, async (req, res) => {
   try {
     const { userId } = req.params;
     const { amount, reason, source = 'other', metadata = {} } = req.body;

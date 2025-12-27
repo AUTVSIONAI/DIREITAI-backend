@@ -18,7 +18,10 @@ async function uploadToSupabase(file, folder = 'uploads') {
     const filePath = `${folder}/${fileName}`;
 
     // Upload para Supabase Storage usando admin client
-    const bucket = folder === 'avatars' ? 'avatars' : 'images'
+    let bucket = 'images';
+    if (folder === 'avatars') bucket = 'avatars';
+    if (folder === 'product-files') bucket = 'downloads';
+    
     const { data, error } = await adminSupabase.storage
       .from(bucket)
       .upload(filePath, file.buffer, {
@@ -63,7 +66,38 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB
+    fileSize: 10 * 1024 * 1024 // 10MB
+  }
+});
+
+// Middleware para tratamento de erros do Multer
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    console.error('❌ Erro Multer:', err);
+    return res.status(400).json({ error: 'Erro no upload de arquivo', details: err.message });
+  } else if (err) {
+    console.error('❌ Erro Upload:', err);
+    return res.status(400).json({ error: err.message });
+  }
+  next();
+};
+
+// Filtro para arquivos digitais (PDF, ZIP, EPUB)
+const pdfFilter = (req, file, cb) => {
+  const allowed = ['application/pdf', 'application/zip', 'application/epub+zip', 'application/x-zip-compressed'];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Apenas arquivos PDF, ZIP e EPUB são permitidos.'), false);
+  }
+};
+
+// Configurar multer para PDF
+const uploadPdf = multer({
+  storage: storage,
+  fileFilter: pdfFilter,
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB
   }
 });
 
@@ -98,6 +132,121 @@ router.post('/politician-photo', authenticateUser, authenticateAdmin, upload.sin
     res.status(500).json({ error: 'Erro interno do servidor', message: error.message });
   }
 });
+
+// Upload de imagem de produto
+router.post('/store-image', authenticateUser, authenticateAdmin, (req, res, next) => {
+  console.log('📥 [Upload] Iniciando upload de imagem...');
+  console.log('📥 [Upload] Headers:', JSON.stringify(req.headers['content-type']));
+  
+  upload.single('image')(req, res, (err) => {
+    console.log('📥 [Upload] Middleware do Multer executado.');
+    if (err) {
+      console.error('❌ [Upload] Erro capturado pelo Multer:', err);
+      return handleMulterError(err, req, res, next);
+    }
+    if (!req.file) {
+      console.error('❌ [Upload] req.file está vazio após Multer!');
+    } else {
+      console.log('✅ [Upload] Arquivo recebido:', req.file.originalname, req.file.mimetype, req.file.size);
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
+    }
+
+    console.log('🔍 Iniciando upload de imagem de produto para Supabase...');
+    
+    // Upload para Supabase Storage (pasta products)
+    const uploadResult = await uploadToSupabase(req.file, 'products');
+    
+    console.log('✅ Upload de produto bem-sucedido:', uploadResult);
+    
+    res.json({
+      success: true,
+      message: 'Imagem do produto enviada com sucesso',
+      data: {
+        imageUrl: uploadResult.publicUrl
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erro no upload da imagem do produto:', error);
+    res.status(500).json({ error: 'Erro interno do servidor', message: error.message });
+  }
+});
+
+// Alias para /image (para compatibilidade com chamadas antigas ou incorretas)
+router.post('/image', authenticateUser, authenticateAdmin, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
+    }
+
+    console.log('🔍 Iniciando upload de imagem (alias) para Supabase...');
+    const uploadResult = await uploadToSupabase(req.file, 'products');
+    
+    res.json({
+      success: true,
+      message: 'Imagem enviada com sucesso',
+      data: {
+        imageUrl: uploadResult.publicUrl
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erro no upload (alias):', error);
+    res.status(500).json({ error: 'Erro interno do servidor', message: error.message });
+  }
+});
+
+// Upload de arquivo digital (PDF)
+router.post('/store-file', authenticateUser, authenticateAdmin, (req, res, next) => {
+  console.log('📥 [Upload] Iniciando upload de arquivo digital...');
+  console.log('📥 [Upload] Headers:', JSON.stringify(req.headers['content-type']));
+
+  uploadPdf.single('file')(req, res, (err) => {
+    console.log('📥 [Upload] Middleware do Multer executado (PDF).');
+    if (err) {
+      console.error('❌ [Upload] Erro capturado pelo Multer (PDF):', err);
+      return handleMulterError(err, req, res, next);
+    }
+    if (!req.file) {
+      console.error('❌ [Upload] req.file está vazio após Multer (PDF)!');
+    } else {
+      console.log('✅ [Upload] Arquivo PDF recebido:', req.file.originalname, req.file.mimetype, req.file.size);
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
+    }
+
+    console.log('🔍 Iniciando upload de arquivo digital para Supabase...');
+    
+    // Upload para Supabase Storage (pasta product-files)
+    // Nota: isso usará o bucket 'images' por padrão na função uploadToSupabase.
+    // Se precisar de outro bucket, a função uploadToSupabase precisaria ser ajustada.
+    const uploadResult = await uploadToSupabase(req.file, 'product-files');
+    
+    console.log('✅ Upload de arquivo digital bem-sucedido:', uploadResult);
+    
+    res.json({
+      success: true,
+      message: 'Arquivo digital enviado com sucesso',
+      data: {
+        fileUrl: uploadResult.publicUrl
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erro no upload do arquivo digital:', error);
+    res.status(500).json({ error: 'Erro interno do servidor', message: error.message });
+  }
+});
+
+module.exports = router;
 
 // Upload de imagem de produto
 router.post('/product-image', authenticateUser, upload.single('image'), async (req, res) => {

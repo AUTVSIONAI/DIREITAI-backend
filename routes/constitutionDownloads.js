@@ -11,17 +11,48 @@ router.get('/users/:userId/status', async (req, res) => {
   try {
     const { userId } = req.params;
     
-    // Verificar se o usuário pode acessar estes dados
-    // userId deve ser o ID da tabela users
-    if (req.user.id.toString() !== userId && req.user.role !== 'admin') {
+    // Resolver o ID do usuário (pode ser auth_id ou id da tabela users)
+    let targetId = userId;
+    let isSelf = false;
+    
+    // Normalizar IDs para string para comparação
+    const reqUserId = req.user.id ? req.user.id.toString().toLowerCase().trim() : '';
+    const reqAuthId = req.user.auth_id ? req.user.auth_id.toString().toLowerCase().trim() : '';
+    const paramUserId = userId ? userId.toString().toLowerCase().trim() : '';
+
+    // Se o ID passado for igual ao auth_id do usuário logado, usar o id do perfil
+    if (reqAuthId === paramUserId) {
+      targetId = req.user.id;
+      isSelf = true;
+      console.log(`[ConstitutionDL] Resolved auth_id ${userId} to users.id ${targetId}`);
+    } else if (reqUserId === paramUserId) {
+      targetId = req.user.id;
+      isSelf = true;
+    }
+
+    if (!isSelf && req.user.role !== 'admin') {
+      console.log(`[ConstitutionDL] Access denied. Request: ${userId}, User: ${req.user.id}`);
       return res.status(403).json({ error: 'Acesso negado' });
+    }
+
+    // Se for admin e não for ele mesmo, tentar resolver o ID caso seja um auth_id
+    if (!isSelf && req.user.role === 'admin') {
+      const { data: userProfile } = await adminSupabase
+        .from('users')
+        .select('id')
+        .or(`id.eq.${userId},auth_id.eq.${userId}`)
+        .single();
+        
+      if (userProfile) {
+        targetId = userProfile.id;
+      }
     }
 
     // Verificar se já existe um download registrado para este usuário
     const { data: download, error } = await adminSupabase
       .from('constitution_downloads')
       .select('*')
-      .eq('user_id', req.user.id)
+      .eq('user_id', targetId)
       .single();
 
     if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
@@ -45,17 +76,57 @@ router.post('/users/:userId/register', async (req, res) => {
   try {
     const { userId } = req.params;
     
-    // Verificar se o usuário pode registrar este download
-    // userId deve ser o ID da tabela users
-    if (req.user.id.toString() !== userId) {
+    // Resolver o ID do usuário (pode ser auth_id ou id da tabela users)
+    let targetId = userId;
+    let isSelf = false;
+    
+    // Normalizar IDs para string para comparação
+    const reqUserId = req.user.id ? req.user.id.toString().toLowerCase().trim() : '';
+    const reqAuthId = req.user.auth_id ? req.user.auth_id.toString().toLowerCase().trim() : '';
+    const paramUserId = userId ? userId.toString().toLowerCase().trim() : '';
+
+    console.log(`[ConstitutionDL] Debug Register: param=${paramUserId}, reqUser=${reqUserId}, reqAuth=${reqAuthId}, role=${req.user.role}`);
+
+    // Se o ID passado for igual ao auth_id do usuário logado, usar o id do perfil
+    if (reqAuthId === paramUserId) {
+      targetId = req.user.id;
+      isSelf = true;
+      console.log(`[ConstitutionDL] Resolved auth_id ${userId} to users.id ${targetId}`);
+    } else if (reqUserId === paramUserId) {
+      targetId = req.user.id;
+      isSelf = true;
+      console.log(`[ConstitutionDL] Resolved user_id ${userId} to users.id ${targetId}`);
+    }
+
+    if (!isSelf && req.user.role !== 'admin') {
+      console.log(`[ConstitutionDL] Access denied. Request: ${userId}, User: ${req.user.id}`);
       return res.status(403).json({ error: 'Acesso negado' });
     }
+
+    // Se for admin e não for ele mesmo, tentar resolver o ID caso seja um auth_id
+    if (!isSelf && req.user.role === 'admin') {
+      const { data: userProfile } = await adminSupabase
+        .from('users')
+        .select('id')
+        .or(`id.eq.${userId},auth_id.eq.${userId}`)
+        .single();
+        
+      if (userProfile) {
+        targetId = userProfile.id;
+        console.log(`[ConstitutionDL] Admin resolved ${userId} to ${targetId}`);
+      } else {
+        console.warn(`[ConstitutionDL] Admin: User not found for ${userId}`);
+        return res.status(404).json({ error: 'Usuário alvo não encontrado' });
+      }
+    }
+    
+    console.log(`[ConstitutionDL] Final targetId for insert: ${targetId}`);
 
     // Verificar se já existe um download registrado para este usuário
     const { data: existingDownload } = await adminSupabase
       .from('constitution_downloads')
       .select('id')
-      .eq('user_id', req.user.id)
+      .eq('user_id', targetId)
       .single();
 
     if (existingDownload) {
@@ -69,7 +140,7 @@ router.post('/users/:userId/register', async (req, res) => {
     const { data: download, error: downloadError } = await adminSupabase
       .from('constitution_downloads')
       .insert({
-        user_id: req.user.id,
+        user_id: targetId,
         points_awarded: 100
       })
       .select()
@@ -84,7 +155,7 @@ router.post('/users/:userId/register', async (req, res) => {
     const { error: pointsError } = await adminSupabase
       .from('points')
       .insert({
-        user_id: req.user.id,
+        user_id: targetId,
         amount: 100,
         reason: 'Download da Constituição Federal',
         category: 'constitution_download',
@@ -94,6 +165,22 @@ router.post('/users/:userId/register', async (req, res) => {
     if (pointsError) {
       console.error('Erro ao adicionar pontos:', pointsError);
       // Não retornar erro aqui, pois o download foi registrado com sucesso
+    } else {
+      // Atualizar cache de pontos na tabela users
+      // Primeiro buscar pontos atuais
+      const { data: currentUser, error: userError } = await adminSupabase
+        .from('users')
+        .select('points')
+        .eq('id', targetId)
+        .single();
+        
+      if (!userError) {
+        const currentPoints = currentUser.points || 0;
+        await adminSupabase
+          .from('users')
+          .update({ points: currentPoints + 100 })
+          .eq('id', targetId);
+      }
     }
 
     res.json({

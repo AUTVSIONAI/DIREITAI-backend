@@ -111,6 +111,40 @@ router.get('/commissions/:code', authenticateUser, async (req, res) => {
   }
 });
 
+// Admin: resumo estatístico de afiliados
+router.get('/summary', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    // 1. Total de afiliados
+    const { count: totalAffiliates, error: errAff } = await adminSupabase
+      .from('affiliates')
+      .select('*', { count: 'exact', head: true });
+    
+    if (errAff) throw errAff;
+
+    // 2. Total de comissões (soma) e pendentes
+    // Buscando dados para cálculo no servidor
+    const { data: commissions, error: errComm } = await adminSupabase
+      .from('affiliate_commissions')
+      .select('commission_amount, status');
+
+    if (errComm) throw errComm;
+
+    const totalCommissions = commissions?.reduce((sum, c) => sum + (Number(c.commission_amount) || 0), 0) || 0;
+    const pendingPayouts = commissions
+      ?.filter(c => c.status === 'pending')
+      .reduce((sum, c) => sum + (Number(c.commission_amount) || 0), 0) || 0;
+
+    return res.json({
+      total_affiliates: totalAffiliates || 0,
+      total_commissions: totalCommissions,
+      pending_payouts: pendingPayouts
+    });
+  } catch (err) {
+    console.error('Affiliates summary error:', err);
+    return res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // Admin: listar afiliados com paginação e enriquecimento de user
 router.get('/', authenticateUser, authenticateAdmin, async (req, res) => {
   try {

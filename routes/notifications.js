@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateUser } = require('../middleware/auth');
+const { authenticateUser, requireAdmin, optionalAuthenticateUser } = require('../middleware/auth');
 // const adminSupabase = require('../config/database'); // Removido - usando adminSupabase
 const { adminSupabase } = require('../config/supabase');
 
@@ -144,22 +144,35 @@ router.post('/create-test-notifications', async (req, res) => {
 });
 
 // =====================================================
-// ROTAS DE TEMPLATES (SEM AUTENTICAÇÃO)
+// ROTAS DE TEMPLATES (OPCIONALMENTE AUTENTICADAS)
 // =====================================================
 
 // Obter templates de notificação
-router.get('/templates', async (req, res) => {
+router.get('/templates', optionalAuthenticateUser, async (req, res) => {
   try {
-    const { type, category, page = 1, limit = 10 } = req.query;
+    const { type, category, page = 1, limit = 10, search, is_active } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Verificar se é admin
+    const isAdmin = req.user && (req.user.role === 'admin' || req.user.is_admin);
 
     // Construir query do Supabase
     let query = adminSupabase
       .from('notification_templates')
       .select('*')
-      .eq('is_active', true)
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
+
+    // Se não for admin, mostrar apenas ativos
+    if (!isAdmin) {
+      query = query.eq('is_active', true);
+    } else {
+      // Se for admin, permitir filtrar por status se fornecido
+      if (is_active !== undefined) {
+        query = query.eq('is_active', is_active === 'true');
+      }
+      // Se não fornecer is_active, traz todos (ativos e inativos)
+    }
 
     // Aplicar filtros
     if (type) {
@@ -167,6 +180,9 @@ router.get('/templates', async (req, res) => {
     }
     if (category) {
       query = query.eq('category', category);
+    }
+    if (search) {
+      query = query.ilike('name', `%${search}%`);
     }
 
     const { data: templates, error } = await query;
@@ -179,11 +195,19 @@ router.get('/templates', async (req, res) => {
     // Contar total
     let countQuery = adminSupabase
       .from('notification_templates')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_active', true);
+      .select('*', { count: 'exact', head: true });
+
+    if (!isAdmin) {
+      countQuery = countQuery.eq('is_active', true);
+    } else {
+      if (is_active !== undefined) {
+        countQuery = countQuery.eq('is_active', is_active === 'true');
+      }
+    }
 
     if (type) countQuery = countQuery.eq('type', type);
     if (category) countQuery = countQuery.eq('category', category);
+    if (search) countQuery = countQuery.ilike('name', `%${search}%`);
 
     const { count: totalCount } = await countQuery;
 
@@ -200,7 +224,7 @@ router.get('/templates', async (req, res) => {
 });
 
 // Obter metadados dos templates
-router.get('/templates/metadata', async (req, res) => {
+router.get('/templates/metadata', optionalAuthenticateUser, async (req, res) => {
   try {
     const categories = [
       { value: 'event', label: 'Eventos', description: 'Templates para notificações de eventos' },
@@ -248,7 +272,303 @@ router.get('/templates/metadata', async (req, res) => {
 });
 
 // Middleware para autenticação em todas as outras rotas
-// router.use(authenticateUser); // Comentado temporariamente para debug
+router.use(authenticateUser);
+
+// === CANAIS E FILA (ADMIN) ===
+
+// Obter canais de notificação disponíveis
+router.get('/channels', async (req, res) => {
+  try {
+    // Retornar canais estáticos ou buscar do banco se houver configuração dinâmica
+    const channels = [
+      { type: 'in_app', status: 'active', name: 'In-App' },
+      { type: 'email', status: 'active', name: 'E-mail' },
+      { type: 'push', status: 'active', name: 'Push Notification' },
+      { type: 'sms', status: 'inactive', name: 'SMS' } // Exemplo: SMS inativo
+    ];
+    res.json(channels);
+  } catch (error) {
+    console.error('Erro ao buscar canais:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Obter fila de notificações (Admin)
+router.get('/queue', requireAdmin, async (req, res) => {
+  try {
+    const { status, priority, page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    let query = adminSupabase
+      .from('notification_queue')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + parseInt(limit) - 1);
+
+    if (status) query = query.eq('status', status);
+    if (priority) query = query.eq('priority', priority);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      // Se a tabela não existir, retornar array vazio para não quebrar o frontend
+      if (error.code === '42P01') { // undefined_table
+        return res.json({ items: [], total: 0, totalPages: 0 });
+      }
+      throw error;
+    }
+
+    res.json({
+      items: data || [],
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / parseInt(limit))
+    });
+  } catch (error) {
+    console.error('Erro ao buscar fila de notificações:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// === PREFERÊNCIAS DE NOTIFICAÇÃO ===
+
+// Obter preferências
+router.get('/preferences', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    let { data, error } = await adminSupabase
+      .from('user_notification_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code === 'PGRST116') {
+      // Se não existir, criar padrão
+      const { data: newData, error: createError } = await adminSupabase
+        .from('user_notification_preferences')
+        .insert({ user_id: userId })
+        .select()
+        .single();
+      
+      if (createError) throw createError;
+      data = newData;
+    } else if (error) {
+      throw error;
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao obter preferências:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Atualizar preferências
+router.patch('/preferences', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { notification_preferences } = req.body;
+
+    // Verificar se existe
+    const { data: existing } = await adminSupabase
+      .from('user_notification_preferences')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    let query;
+    if (existing) {
+      query = adminSupabase
+        .from('user_notification_preferences')
+        .update({ 
+          notification_preferences,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId);
+    } else {
+      query = adminSupabase
+        .from('user_notification_preferences')
+        .insert({ 
+          user_id: userId,
+          notification_preferences
+        });
+    }
+
+    const { data, error } = await query.select().single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao atualizar preferências:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Resetar preferências
+router.post('/preferences/reset', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { error } = await adminSupabase
+      .from('user_notification_preferences')
+      .delete()
+      .eq('user_id', userId);
+
+    if (error) throw error;
+
+    const { data: newData, error: createError } = await adminSupabase
+      .from('user_notification_preferences')
+      .insert({ user_id: userId })
+      .select()
+      .single();
+
+    if (createError) throw createError;
+    res.json(newData);
+  } catch (error) {
+    console.error('Erro ao resetar preferências:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// === GESTÃO DE TEMPLATES (ADMIN) ===
+
+// Criar template
+router.post('/templates', requireAdmin, async (req, res) => {
+  try {
+    const { name, type, category, title, content, variables, is_active, metadata, subject } = req.body;
+    const createdBy = req.user.id;
+
+    const { data, error } = await adminSupabase
+      .from('notification_templates')
+      .insert({
+        name,
+        type,
+        category,
+        title,
+        content,
+        subject,
+        variables: variables || [],
+        is_active: is_active !== undefined ? is_active : true,
+        metadata: metadata || {},
+        created_by: createdBy
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (error) {
+    console.error('Erro ao criar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Atualizar template
+router.patch('/templates/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    updates.updated_at = new Date().toISOString();
+
+    const { data, error } = await adminSupabase
+      .from('notification_templates')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: 'Template não encontrado' });
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao atualizar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Deletar template
+router.delete('/templates/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = await adminSupabase
+      .from('notification_templates')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.status(204).send();
+  } catch (error) {
+    console.error('Erro ao deletar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Duplicar template
+router.post('/templates/:id/duplicate', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    const createdBy = req.user.id;
+
+    const { data: original, error: fetchError } = await adminSupabase
+      .from('notification_templates')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !original) return res.status(404).json({ error: 'Template original não encontrado' });
+
+    const { id: _, created_at, updated_at, ...templateData } = original;
+    templateData.name = name || `${original.name} (Cópia)`;
+    templateData.created_by = createdBy;
+
+    const { data, error } = await adminSupabase
+      .from('notification_templates')
+      .insert(templateData)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (error) {
+    console.error('Erro ao duplicar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Visualizar template (preview)
+router.post('/templates/:id/preview', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sampleData = req.body || {};
+
+    const { data: template, error } = await adminSupabase
+      .from('notification_templates')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !template) return res.status(404).json({ error: 'Template não encontrado' });
+
+    // Substituição simples de variáveis
+    let content = template.content;
+    let subject = template.subject || '';
+
+    Object.entries(sampleData).forEach(([key, value]) => {
+      const regex = new RegExp(`{{${key}}}`, 'g');
+      content = content.replace(regex, value);
+      subject = subject.replace(regex, value);
+    });
+
+    res.json({
+      subject,
+      content,
+      renderedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Erro ao visualizar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// === ROTAS GERAIS ===
 
 // Obter notificações do usuário
 router.get('/', async (req, res) => {
@@ -275,7 +595,7 @@ router.get('/', async (req, res) => {
     // Construir query do Supabase
     let query = adminSupabase
       .from('notifications')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -352,11 +672,169 @@ router.get('/', async (req, res) => {
   }
 });
 
+// === GESTÃO DE ANÚNCIOS (ADMIN) ===
+
+// Listar anúncios (admin)
+router.get('/announcements/admin/all', requireAdmin, async (req, res) => {
+  try {
+    const { active, archived, limit = 20, offset = 0 } = req.query;
+
+    let query = adminSupabase
+      .from('announcements')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+
+    if (active !== undefined) {
+       // Note: frontend sends 'active=true/false' string
+       if (active === 'true') query = query.eq('active', true);
+       if (active === 'false') query = query.eq('active', false);
+    }
+    
+    if (archived !== undefined) {
+       if (archived === 'true') query = query.eq('is_archived', true);
+       if (archived === 'false') query = query.eq('is_archived', false);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) throw error;
+
+    res.json({
+      announcements: data || [],
+      total: count || 0
+    });
+  } catch (error) {
+    console.error('Erro ao listar anúncios admin:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Criar anúncio (admin)
+router.post('/announcements/admin', requireAdmin, async (req, res) => {
+  try {
+    const { 
+      title, 
+      message, 
+      type, 
+      priority,
+      target_audience,
+      start_date,
+      end_date,
+      active,
+      display_rules,
+      style,
+      position,
+      is_dismissible,
+      is_persistent,
+      action,
+      styling
+    } = req.body;
+    
+    const createdBy = req.user.id;
+
+    const { data, error } = await adminSupabase
+      .from('announcements')
+      .insert({
+        title,
+        message,
+        type: type || 'info',
+        priority: priority || 'normal',
+        target_audience: target_audience || 'all',
+        start_date: start_date || new Date().toISOString(),
+        end_date: end_date || null,
+        active: active !== undefined ? active : true,
+        created_by: createdBy,
+        is_archived: false,
+        display_rules: display_rules || {},
+        style: style || 'banner',
+        position: position || 'top',
+        is_dismissible: is_dismissible !== undefined ? is_dismissible : true,
+        is_persistent: is_persistent || false,
+        action: action || {},
+        styling: styling || {}
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (error) {
+    console.error('Erro ao criar anúncio:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Arquivar anúncio (admin)
+router.patch('/announcements/admin/:id/archive', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { data, error } = await adminSupabase
+      .from('announcements')
+      .update({ is_archived: true, active: false })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao arquivar anúncio:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Desarquivar anúncio (admin)
+router.patch('/announcements/admin/:id/unarchive', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { data, error } = await adminSupabase
+      .from('announcements')
+      .update({ is_archived: false }) 
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao desarquivar anúncio:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Atualizar anúncio (admin)
+router.put('/announcements/admin/:id', requireAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updates = req.body;
+        
+        // Remove restricted fields if any
+        delete updates.id;
+        delete updates.created_at;
+        delete updates.created_by;
+
+        const { data, error } = await adminSupabase
+            .from('announcements')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error('Erro ao atualizar anúncio:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
 // Obter banners de anúncio ativos
 router.get('/announcements', async (req, res) => {
   try {
-    // Teste sem autenticação para debug
-    const userId = 'test-user-id';
+    const userId = req.user ? req.user.id : null;
     console.log('🔔 INÍCIO - Buscando anúncios para usuário:', userId);
 
     // Buscar anúncios ativos (usando 'active' em vez de 'is_active')
@@ -380,7 +858,7 @@ router.get('/announcements', async (req, res) => {
 
     // Buscar dispensas do usuário (apenas se userId for um UUID válido)
     let dismissals = [];
-    if (userId && userId !== 'test-user-id') {
+    if (userId) {
       const { data: dismissalsData, error: dismissalsError } = await adminSupabase
         .from('announcement_dismissals')
         .select('announcement_id')
@@ -391,12 +869,10 @@ router.get('/announcements', async (req, res) => {
 
       if (dismissalsError) {
         console.error('Erro ao buscar dispensas:', dismissalsError);
-        // Continuar mesmo com erro nas dispensas para usuários de teste
+        // Continuar mesmo com erro nas dispensas
       } else {
         dismissals = dismissalsData || [];
       }
-    } else {
-      console.log('🚫 Usuário de teste - pulando busca de dispensas');
     }
 
     // Filtrar anúncios não dispensados
@@ -411,10 +887,67 @@ router.get('/announcements', async (req, res) => {
   }
 });
 
+// Marcar todas as notificações como lidas
+router.patch('/read-all', async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+    const userId = req.user.id;
+
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ 
+        is_read: true, 
+        read_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId)
+      .eq('is_read', false)
+      .select();
+
+    if (error) {
+      console.error('Erro ao marcar todas como lidas:', error);
+      return res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+
+    res.json({ count: data?.length || 0 });
+  } catch (error) {
+    console.error('Erro ao marcar todas como lidas:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Deletar todas as notificações
+router.delete('/all', async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+    const userId = req.user.id;
+
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .delete()
+      .eq('user_id', userId)
+      .select();
+
+    if (error) {
+      console.error('Erro ao deletar todas as notificações:', error);
+      return res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+
+    res.json({ count: data?.length || 0 });
+  } catch (error) {
+    console.error('Erro ao deletar todas as notificações:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // Obter notificação específica
 router.get('/:id', async (req, res) => {
   try {
-    const userId = req.user ? req.user.id : 'test-user-id';
+    const userId = req.user.id;
     const { id } = req.params;
 
     const { data: notification, error } = await adminSupabase
@@ -431,6 +964,110 @@ router.get('/:id', async (req, res) => {
     res.json(notification);
   } catch (error) {
     console.error('Erro ao buscar notificação:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Broadcast de notificação (admin)
+router.post('/broadcast', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const {
+      type,
+      category,
+      title,
+      message,
+      short_message,
+      icon,
+      image_url,
+      priority = 'medium',
+      data,
+      action_url,
+      action_label,
+      expires_at,
+      scheduled_for,
+      target_audience
+    } = req.body;
+
+    // Validação básica
+    if (!type || !category || !title || !message) {
+      return res.status(400).json({ error: 'Campos obrigatórios: type, category, title, message' });
+    }
+
+    console.log('📢 Iniciando broadcast de notificação:', { title, type, category });
+
+    // Processamento em lotes (paginação) para evitar sobrecarga de memória
+    let page = 0;
+    const pageSize = 1000;
+    let totalProcessed = 0;
+    let hasMore = true;
+
+    // Iniciar resposta assíncrona (opcional: responder antes de terminar se for muito longo)
+    // Por enquanto, vamos esperar terminar, mas com paginação.
+
+    while (hasMore) {
+      // Buscar página de usuários
+      const { data: users, error: usersError } = await adminSupabase
+        .from('auth.users')
+        .select('id')
+        .order('created_at', { ascending: true })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (usersError) {
+        console.error(`Erro ao buscar página ${page} de usuários:`, usersError);
+        break;
+      }
+
+      if (!users || users.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      // Preparar notificações para este lote
+      const notificationsToInsert = users.map(u => ({
+        user_id: u.id,
+        type,
+        category,
+        title,
+        message,
+        short_message,
+        icon,
+        image_url,
+        priority,
+        data: data ? JSON.stringify(data) : null,
+        action_url,
+        action_label,
+        expires_at,
+        scheduled_for,
+        is_read: false,
+        created_at: new Date().toISOString()
+      }));
+
+      // Inserir lote
+      const { error: insertError } = await adminSupabase
+        .from('notifications')
+        .insert(notificationsToInsert);
+      
+      if (insertError) {
+        console.error(`Erro ao inserir lote ${page}:`, insertError);
+      } else {
+        totalProcessed += users.length;
+      }
+
+      if (users.length < pageSize) {
+        hasMore = false;
+      }
+      page++;
+    }
+
+    console.log(`✅ Broadcast concluído. Total enviado: ${totalProcessed}`);
+
+    res.json({ 
+      success: true, 
+      message: `Broadcast enviado para ${totalProcessed} usuários` 
+    });
+
+  } catch (error) {
+    console.error('Erro no broadcast:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
@@ -504,7 +1141,10 @@ router.post('/', async (req, res) => {
 // Marcar notificação como lida
 router.patch('/:id/read', async (req, res) => {
   try {
-    const userId = req.user ? req.user.id : 'test-user-id';
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+    const userId = req.user.id;
     const { id } = req.params;
 
     const { data: notification, error } = await adminSupabase
@@ -533,7 +1173,10 @@ router.patch('/:id/read', async (req, res) => {
 // Marcar notificação como não lida
 router.patch('/:id/unread', async (req, res) => {
   try {
-    const userId = req.user ? req.user.id : 'test-user-id';
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+    const userId = req.user.id;
     const { id } = req.params;
 
     const { data: notification, error } = await adminSupabase
@@ -693,118 +1336,10 @@ router.patch('/:id/dismiss', async (req, res) => {
   }
 });
 
-// Obter preferências de notificação do usuário
-router.get('/preferences', async (req, res) => {
-  try {
-    const userId = req.user ? req.user.id : 'test-user-id';
+// === ROTAS DE PREFERÊNCIAS REMOVIDAS (DUPLICADAS) ===
+// As rotas de preferências agora utilizam a tabela user_notification_preferences
+// e estão definidas no início deste arquivo.
 
-    const { data: user, error } = await adminSupabase
-      .from('users')
-      .select('notification_preferences')
-      .eq('id', userId)
-      .single();
-
-    if (error || !user) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
-    }
-
-    const preferences = user.notification_preferences || {
-      email_notifications: true,
-      sms_notifications: false,
-      push_notifications: true,
-      in_app_notifications: true,
-      marketing_emails: false,
-      event_reminders: true,
-      achievement_notifications: true,
-      social_notifications: true,
-      security_alerts: true,
-      digest_frequency: 'daily',
-      quiet_hours: {
-        enabled: false,
-        start_time: '22:00',
-        end_time: '08:00',
-        timezone: 'America/Sao_Paulo'
-      }
-    };
-
-    res.json(preferences);
-  } catch (error) {
-    console.error('Erro ao buscar preferências de notificação:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
-
-// Atualizar preferências de notificação
-router.patch('/preferences', async (req, res) => {
-  try {
-    const userId = req.user ? req.user.id : 'test-user-id';
-    const preferences = req.body;
-
-    const { data: user, error } = await adminSupabase
-      .from('users')
-      .update({ 
-        notification_preferences: preferences,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', userId)
-      .select('notification_preferences')
-      .single();
-
-    if (error || !user) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
-    }
-
-    res.json(user.notification_preferences);
-  } catch (error) {
-    console.error('Erro ao atualizar preferências de notificação:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
-
-// Resetar preferências para padrão
-router.post('/preferences/reset', async (req, res) => {
-  try {
-    const userId = req.user ? req.user.id : 'test-user-id';
-    
-    const defaultPreferences = {
-      email_notifications: true,
-      sms_notifications: false,
-      push_notifications: true,
-      in_app_notifications: true,
-      marketing_emails: false,
-      event_reminders: true,
-      achievement_notifications: true,
-      social_notifications: true,
-      security_alerts: true,
-      digest_frequency: 'daily',
-      quiet_hours: {
-        enabled: false,
-        start_time: '22:00',
-        end_time: '08:00',
-        timezone: 'America/Sao_Paulo'
-      }
-    };
-
-    const { data: user, error } = await adminSupabase
-      .from('users')
-      .update({ 
-        notification_preferences: defaultPreferences,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', userId)
-      .select('notification_preferences')
-      .single();
-
-    if (error || !user) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
-    }
-
-    res.json(user.notification_preferences);
-  } catch (error) {
-    console.error('Erro ao resetar preferências de notificação:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
 
 // Dispensar anúncio
 router.post('/announcements/:id/dismiss', async (req, res) => {
@@ -1675,6 +2210,320 @@ router.get('/analytics/performance', async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao obter relatório de performance:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// =====================================================
+// ROTAS DE PREFERÊNCIAS
+// =====================================================
+
+// Obter preferências de notificação do usuário
+router.get('/preferences', async (req, res) => {
+  try {
+    const userId = req.user ? req.user.id : null;
+    
+    if (!userId) {
+      // Se não houver usuário autenticado (teste), retornar padrão
+      return res.json({
+        email: true,
+        push: true,
+        in_app: true,
+        categories: {
+          event: true,
+          store: true,
+          ai: true,
+          gamification: true,
+          social: true,
+          system: true,
+          security: true,
+          marketing: false
+        }
+      });
+    }
+
+    const { data: preferences, error } = await adminSupabase
+      .from('user_notification_preferences')
+      .select('notification_preferences')
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // Preferências não encontradas, criar padrão
+        const defaultPreferences = {
+          email: true,
+          push: true,
+          in_app: true,
+          categories: {
+            event: true,
+            store: true,
+            ai: true,
+            gamification: true,
+            social: true,
+            system: true,
+            security: true,
+            marketing: false
+          }
+        };
+
+        const { data: newPreferences, error: createError } = await adminSupabase
+          .from('user_notification_preferences')
+          .insert({
+            user_id: userId,
+            notification_preferences: defaultPreferences
+          })
+          .select('notification_preferences')
+          .single();
+
+        if (createError) {
+          console.error('Erro ao criar preferências padrão:', createError);
+          return res.status(500).json({ error: 'Erro ao criar preferências' });
+        }
+
+        return res.json(newPreferences.notification_preferences);
+      }
+      
+      console.error('Erro ao buscar preferências:', error);
+      return res.status(500).json({ error: 'Erro ao buscar preferências' });
+    }
+
+    res.json(preferences.notification_preferences);
+  } catch (error) {
+    console.error('Erro ao buscar preferências:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Atualizar preferências de notificação
+router.patch('/preferences', async (req, res) => {
+  try {
+    const userId = req.user ? req.user.id : null;
+    const preferences = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+
+    const { data: updatedPreferences, error } = await adminSupabase
+      .from('user_notification_preferences')
+      .upsert({
+        user_id: userId,
+        notification_preferences: preferences,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' })
+      .select('notification_preferences')
+      .single();
+
+    if (error) {
+      console.error('Erro ao atualizar preferências:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar preferências' });
+    }
+
+    res.json(updatedPreferences.notification_preferences);
+  } catch (error) {
+    console.error('Erro ao atualizar preferências:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// =====================================================
+// ROTAS DE TEMPLATES
+// =====================================================
+
+// Listar templates
+router.get('/templates', async (req, res) => {
+  try {
+    const { type, category } = req.query;
+    let query = adminSupabase
+      .from('notification_templates')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (type) query = query.eq('type', type);
+    if (category) query = query.eq('category', category);
+
+    const { data: templates, error } = await query;
+
+    if (error) {
+      console.error('Erro ao buscar templates:', error);
+      return res.status(500).json({ error: 'Erro ao buscar templates' });
+    }
+
+    res.json(templates);
+  } catch (error) {
+    console.error('Erro ao buscar templates:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Criar template
+router.post('/templates', async (req, res) => {
+  try {
+    const { name, type, category, title, content, html_content, variables, is_system } = req.body;
+    
+    const { data: template, error } = await adminSupabase
+      .from('notification_templates')
+      .insert({
+        name,
+        type,
+        category,
+        title,
+        content,
+        html_content,
+        variables,
+        is_system: is_system || false,
+        created_by: req.user ? req.user.id : null
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Erro ao criar template:', error);
+      return res.status(500).json({ error: 'Erro ao criar template' });
+    }
+
+    res.status(201).json(template);
+  } catch (error) {
+    console.error('Erro ao criar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Atualizar template
+router.put('/templates/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    
+    const { data: template, error } = await adminSupabase
+      .from('notification_templates')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Erro ao atualizar template:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar template' });
+    }
+
+    res.json(template);
+  } catch (error) {
+    console.error('Erro ao atualizar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Deletar template
+router.delete('/templates/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { error } = await adminSupabase
+      .from('notification_templates')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Erro ao deletar template:', error);
+      return res.status(500).json({ error: 'Erro ao deletar template' });
+    }
+
+    res.json({ message: 'Template deletado com sucesso' });
+  } catch (error) {
+    console.error('Erro ao deletar template:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// =====================================================
+// ROTA DE ARQUIVAMENTO
+// =====================================================
+
+// Arquivar notificação
+router.patch('/:id/archive', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ 
+        is_archived: true,
+        archived_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select();
+
+    if (error) {
+      console.error('Erro ao arquivar notificação:', error);
+      if (error.message && error.message.includes('column "is_archived" of relation "notifications" does not exist')) {
+         return res.status(501).json({ error: 'Funcionalidade de arquivar não disponível (coluna ausente no banco de dados)' });
+      }
+      return res.status(500).json({ error: 'Erro ao arquivar notificação' });
+    }
+
+    res.json({ message: 'Notificação arquivada com sucesso' });
+  } catch (error) {
+    console.error('Erro ao arquivar notificação:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Arquivar notificação
+router.patch('/:id/archive', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ 
+        is_archived: true, 
+        archived_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: 'Notificação não encontrada' });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao arquivar notificação:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Desarquivar notificação
+router.patch('/:id/unarchive', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ 
+        is_archived: false, 
+        archived_at: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: 'Notificação não encontrada' });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao desarquivar notificação:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

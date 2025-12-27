@@ -23,11 +23,19 @@ router.get('/products', async (req, res) => {
       query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
     }
 
-    const { data: products, error } = await query;
+    const { data: productsData, error } = await query;
 
     if (error) {
       return res.status(400).json({ error: error.message });
     }
+
+    const products = productsData.map(product => ({
+      ...product,
+      inStock: product.type === 'digital' || (product.stock_quantity && product.stock_quantity > 0),
+      // Fallback para exibir comissão mesmo se colunas não existirem no banco
+      affiliate_enabled: product.affiliate_enabled !== undefined ? product.affiliate_enabled : true,
+      affiliate_rate_percent: product.affiliate_rate_percent || 10
+    }));
 
     res.json({ products });
   } catch (error) {
@@ -41,16 +49,23 @@ router.get('/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { data: product, error } = await supabase
+    const { data: productData, error } = await supabase
       .from('products')
       .select('*')
       .eq('id', id)
       .eq('active', true)
       .single();
 
-    if (error || !product) {
+    if (error || !productData) {
       return res.status(404).json({ error: 'Product not found' });
     }
+
+    const product = {
+      ...productData,
+      inStock: productData.type === 'digital' || (productData.stock_quantity && productData.stock_quantity > 0),
+      affiliate_enabled: productData.affiliate_enabled !== undefined ? productData.affiliate_enabled : true,
+      affiliate_rate_percent: productData.affiliate_rate_percent || 10
+    };
 
     res.json({ product });
   } catch (error) {
@@ -103,8 +118,8 @@ router.post('/cart', authenticateUser, async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    // Check stock
-    if (product.stock_quantity < quantity) {
+    // Check stock (skip for digital products)
+    if (product.type !== 'digital' && product.stock_quantity < quantity) {
       return res.status(400).json({ error: 'Insufficient stock' });
     }
 
@@ -122,7 +137,7 @@ router.post('/cart', authenticateUser, async (req, res) => {
     if (existingItem) {
       // Update quantity
       const newQuantity = existingItem.quantity + quantity;
-      if (newQuantity > product.stock_quantity) {
+      if (product.type !== 'digital' && newQuantity > product.stock_quantity) {
         return res.status(400).json({ error: 'Insufficient stock' });
       }
 
@@ -239,7 +254,8 @@ router.put('/cart/:itemId', authenticateUser, async (req, res) => {
       .select(`
         *,
         products (
-          stock_quantity
+          stock_quantity,
+          type
         )
       `)
       .eq('id', itemId)
@@ -250,8 +266,8 @@ router.put('/cart/:itemId', authenticateUser, async (req, res) => {
       return res.status(404).json({ error: 'Cart item not found' });
     }
 
-    // Check stock
-    if (quantity > cartItem.products.stock_quantity) {
+    // Check stock (skip for digital products)
+    if (cartItem.products.type !== 'digital' && quantity > cartItem.products.stock_quantity) {
       return res.status(400).json({ error: 'Insufficient stock' });
     }
 

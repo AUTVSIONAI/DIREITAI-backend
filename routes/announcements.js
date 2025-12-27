@@ -108,24 +108,37 @@ router.post('/:id/dismiss', authenticateUser, async (req, res) => {
     // Incrementar contador de dispensas
     await adminSupabase
       .rpc('increment_announcement_dismiss', { announcement_id_input: id })
-      .catch(async () => {
-        // Fallback se função RPC não existir
-        const { data: current } = await adminSupabase
+      .catch(async (rpcError) => {
+        console.warn(`[Announcements] RPC increment_announcement_dismiss falhou para ${id}. Erro: ${rpcError.message}. Tentando fallback...`);
+
+        const { data: current, error: selectError } = await adminSupabase
           .from('announcements')
           .select('dismiss_count')
           .eq('id', id)
           .single();
+          
+        if (selectError) {
+          console.error(`[Announcements] Fallback select (dismiss) falhou: ${selectError.message}`);
+          return; // Ignorar erro
+        }
+
         const next = (current?.dismiss_count || 0) + 1;
-        await adminSupabase
+        const { error: updateError } = await adminSupabase
           .from('announcements')
           .update({ dismiss_count: next })
           .eq('id', id);
+          
+        if (updateError) {
+          console.error(`[Announcements] Fallback update (dismiss) falhou: ${updateError.message}`);
+          return; // Ignorar erro
+        }
       });
 
     res.status(204).send();
   } catch (error) {
     console.error('Erro ao dispensar anúncio:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    // Não retornar 500 para evitar que o frontend mostre erro para o usuário em uma operação secundária
+    res.status(200).json({ success: true, message: 'Dispensado (com aviso)' });
   }
 });
 
@@ -146,23 +159,36 @@ router.post('/:id/click', optionalAuthenticateUser, async (req, res) => {
     // Incrementar contador de cliques
     await adminSupabase
       .rpc('increment_announcement_click', { announcement_id_input: id })
-      .catch(async () => {
-        const { data: current } = await adminSupabase
+      .catch(async (rpcError) => {
+        console.warn(`[Announcements] RPC increment_announcement_click falhou para ${id}. Erro: ${rpcError.message}. Tentando fallback...`);
+
+        const { data: current, error: selectError } = await adminSupabase
           .from('announcements')
           .select('click_count')
           .eq('id', id)
           .single();
+          
+        if (selectError) {
+          console.error(`[Announcements] Fallback select (click) falhou: ${selectError.message}`);
+          return; // Ignorar erro
+        }
+
         const next = (current?.click_count || 0) + 1;
-        await adminSupabase
+        const { error: updateError } = await adminSupabase
           .from('announcements')
           .update({ click_count: next })
           .eq('id', id);
+          
+        if (updateError) {
+          console.error(`[Announcements] Fallback update (click) falhou: ${updateError.message}`);
+          return; // Ignorar erro
+        }
       });
 
     res.status(204).send();
   } catch (error) {
     console.error('Erro ao registrar clique no anúncio:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    res.status(200).json({ success: true, message: 'Clique registrado (com aviso)' });
   }
 });
 
@@ -183,23 +209,36 @@ router.post('/:id/view', optionalAuthenticateUser, async (req, res) => {
     // Incrementar contador de visualizações
     await adminSupabase
       .rpc('increment_announcement_view', { announcement_id_input: id })
-      .catch(async () => {
-        const { data: current } = await adminSupabase
+      .catch(async (rpcError) => {
+        console.warn(`[Announcements] RPC increment_announcement_view falhou para ${id}. Erro: ${rpcError.message}. Tentando fallback...`);
+        
+        const { data: current, error: selectError } = await adminSupabase
           .from('announcements')
           .select('view_count')
           .eq('id', id)
           .single();
+          
+        if (selectError) {
+          console.error(`[Announcements] Fallback select falhou: ${selectError.message}`);
+          return; // Ignorar erro
+        }
+
         const next = (current?.view_count || 0) + 1;
-        await adminSupabase
+        const { error: updateError } = await adminSupabase
           .from('announcements')
           .update({ view_count: next })
           .eq('id', id);
+          
+        if (updateError) {
+          console.error(`[Announcements] Fallback update falhou: ${updateError.message}`);
+          return; // Ignorar erro
+        }
       });
 
     res.status(204).send();
   } catch (error) {
     console.error('Erro ao registrar visualização do anúncio:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    res.status(200).json({ success: true, message: 'Visualização registrada (com aviso)' });
   }
 });
 
@@ -223,6 +262,20 @@ router.get('/admin/all', authenticateUser, requireAdmin, async (req, res) => {
     if (status) {
       query = query.eq('is_active', status === 'active');
     }
+    
+    // Filtro de arquivados (padrão: não mostrar arquivados, a menos que solicitado)
+    const showArchived = req.query.archived === 'true';
+    if (showArchived) {
+      query = query.eq('is_archived', true);
+    } else {
+      // Se não pediu arquivados, mostra apenas não arquivados (compatibilidade com tabela que pode não ter a coluna ainda? 
+      // Não, assumimos que a coluna existe se vamos usar o recurso. Mas se não existir, vai dar erro?
+      // O Supabase ignora filtros em colunas inexistentes? Não, dá erro.
+      // Como não posso garantir que a migration rodou, vou tentar ser defensivo? 
+      // Não, o código de archive já assume que a coluna existe. Então vou assumir que existe.)
+      query = query.eq('is_archived', false);
+    }
+
     if (type) {
       query = query.eq('type', type);
     }
@@ -283,11 +336,16 @@ router.post('/admin', authenticateUser, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Título e mensagem são obrigatórios' });
     }
 
+    if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
+      return res.status(400).json({ error: 'A data de início deve ser anterior à data de término' });
+    }
+
     const { data, error } = await adminSupabase
       .from('announcements')
       .insert({
         title,
         message,
+        content: message,
         type,
         style,
         position,
@@ -298,8 +356,8 @@ router.post('/admin', authenticateUser, requireAdmin, async (req, res) => {
         action,
         styling,
         priority,
-        start_date,
-        end_date,
+        start_date: start_date || new Date().toISOString(),
+        end_date: end_date || null,
         created_by: createdBy,
         is_active: true,
         view_count: 0,
@@ -348,6 +406,7 @@ router.put('/admin/:id', authenticateUser, requireAdmin, async (req, res) => {
       .update({
         title,
         message,
+        content: message,
         type,
         style,
         position,
@@ -360,7 +419,7 @@ router.put('/admin/:id', authenticateUser, requireAdmin, async (req, res) => {
         is_active,
         priority,
         start_date,
-        end_date,
+        end_date: end_date || null,
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
@@ -459,6 +518,58 @@ router.get('/admin/:id/stats', authenticateUser, requireAdmin, async (req, res) 
     });
   } catch (error) {
     console.error('Erro ao buscar estatísticas do anúncio:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Arquivar anúncio (admin)
+router.patch('/admin/:id/archive', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await adminSupabase
+      .from('announcements')
+      .update({ 
+        is_archived: true, 
+        archived_at: new Date().toISOString(),
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: 'Anúncio não encontrado' });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao arquivar anúncio:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Desarquivar anúncio (admin)
+router.patch('/admin/:id/unarchive', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await adminSupabase
+      .from('announcements')
+      .update({ 
+        is_archived: false, 
+        archived_at: null,
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: 'Anúncio não encontrado' });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao desarquivar anúncio:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
