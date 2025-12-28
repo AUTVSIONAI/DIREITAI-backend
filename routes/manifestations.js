@@ -63,16 +63,15 @@ router.get('/', async (req, res) => {
 router.get('/admin', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
     const { status, city, state, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const offset = (pageNum - 1) * limitNum;
 
-    let query = supabase
+    let query = adminSupabase
       .from('manifestations')
-      .select(`
-        *,
-        created_by_user:users!manifestations_created_by_fkey(username, email)
-      `, { count: 'exact' })
+      .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .range(offset, offset + limitNum - 1);
 
     // Filtros
     if (status) {
@@ -95,7 +94,7 @@ router.get('/admin', authenticateUser, authenticateAdmin, async (req, res) => {
     // Buscar estatísticas de check-ins para cada manifestação
     const manifestationsWithStats = await Promise.all(
       manifestations.map(async (manifestation) => {
-        const { count: checkinCount } = await supabase
+        const { count: checkinCount } = await adminSupabase
           .from('geographic_checkins')
           .select('*', { count: 'exact', head: true })
           .eq('manifestation_id', manifestation.id);
@@ -107,8 +106,20 @@ router.get('/admin', authenticateUser, authenticateAdmin, async (req, res) => {
           .eq('manifestation_id', manifestation.id)
           .eq('status', 'confirmed');
 
+        // Buscar dados do criador manualmente para evitar erros de FK
+        let createdByUser = null;
+        if (manifestation.created_by) {
+          const { data: userData } = await adminSupabase
+            .from('users')
+            .select('username, email')
+            .eq('id', manifestation.created_by)
+            .maybeSingle();
+          createdByUser = userData;
+        }
+
         return {
           ...manifestation,
+          created_by_user: createdByUser,
           checkin_count: checkinCount || 0,
           rsvp_count: rsvpCount || 0
         };
@@ -125,6 +136,96 @@ router.get('/admin', authenticateUser, authenticateAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao listar manifestações admin:', error);
+    // Log detalhado para debug
+    if (error.response) console.error('Erro response:', error.response);
+    if (error.message) console.error('Erro message:', error.message);
+    if (error.details) console.error('Erro details:', error.details);
+    if (error.hint) console.error('Erro hint:', error.hint);
+    
+    res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
+  }
+});
+
+/**
+ * GET /api/manifestations/:id/analytics
+ * Retorna dados detalhados de check-ins para análise (Admin)
+ */
+router.get('/:id/analytics', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Buscar check-ins (sem join para evitar erros de FK ausente)
+    const { data: checkins, error } = await adminSupabase
+      .from('geographic_checkins')
+      .select('*')
+      .eq('manifestation_id', id);
+
+    if (error) {
+      console.error('Erro ao buscar analytics:', error);
+      return res.status(500).json({ error: 'Erro ao buscar dados de análise' });
+    }
+
+    // Buscar dados dos usuários manualmente
+    const userIds = checkins.map(c => c.user_id).filter(id => id);
+    let usersMap = {};
+    
+    if (userIds.length > 0) {
+      const { data: users, error: usersError } = await adminSupabase
+        .from('users')
+        .select('id, username, full_name, email, gender, city, state')
+        .in('id', userIds);
+        
+      if (!usersError && users) {
+        users.forEach(u => {
+          usersMap[u.id] = u;
+        });
+      }
+    }
+
+    // Processar dados para estatísticas
+    const stats = {
+      total_checkins: checkins.length,
+      gender_distribution: { male: 0, female: 0, other: 0, unknown: 0 },
+      region_distribution: {},
+      users_list: []
+    };
+
+    checkins.forEach(checkin => {
+      const user = usersMap[checkin.user_id] || {};
+      const gender = user.gender ? user.gender.toLowerCase() : 'unknown';
+      
+      // Contagem de gênero
+      if (gender === 'male' || gender === 'masculino' || gender === 'homem') stats.gender_distribution.male++;
+      else if (gender === 'female' || gender === 'feminino' || gender === 'mulher') stats.gender_distribution.female++;
+      else if (gender === 'unknown') stats.gender_distribution.unknown++;
+      else stats.gender_distribution.other++;
+
+      // Região (baseada em estado do usuário ou coordenadas do check-in se não disponível)
+      // Tenta usar estado do usuário, senão usa 'Desconhecido'
+      const region = user.state || 'Desconhecido';
+      stats.region_distribution[region] = (stats.region_distribution[region] || 0) + 1;
+
+      // Adicionar à lista detalhada
+      stats.users_list.push({
+        user_id: user.id,
+        name: user.full_name || user.username || 'Usuário',
+        email: user.email,
+        gender: user.gender || 'Não informado',
+        city: user.city || 'Não informado',
+        state: user.state || 'Não informado',
+        checked_in_at: checkin.checked_in_at,
+        latitude: checkin.latitude,
+        longitude: checkin.longitude
+      });
+    });
+
+    res.json({
+      success: true,
+      data: stats
+    });
+
+  } catch (error) {
+    console.error('Erro no analytics:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
@@ -315,6 +416,78 @@ router.delete('/:id', authenticateUser, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao deletar manifestação:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * GET /api/manifestations/checkins/map
+ * Listar todos os check-ins recentes para o mapa (admin)
+ */
+router.get('/checkins/map', authenticateUser, authenticateAdmin, async (req, res) => {
+  try {
+    // Pegar check-ins das últimas 24h
+    const yesterday = new Date();
+    yesterday.setHours(yesterday.getHours() - 24);
+
+    const { data: checkins, error } = await supabase
+      .from('geographic_checkins')
+      .select('id, user_id, manifestation_id, latitude, longitude, checked_in_at')
+      .gte('checked_in_at', yesterday.toISOString())
+      .order('checked_in_at', { ascending: false });
+
+    if (error) {
+      console.error('Erro ao buscar check-ins para o mapa:', error);
+      return res.status(500).json({ error: 'Erro ao buscar check-ins' });
+    }
+
+    // Buscar dados dos usuários
+    const userIds = [...new Set(checkins.map(c => c.user_id))];
+    const { data: users } = await adminSupabase
+      .from('users')
+      .select('id, username, email, full_name, avatar_url')
+      .in('id', userIds);
+    
+    const usersMap = new Map((users || []).map(u => [u.id, u]));
+    
+    // Adicionar dados do usuário
+    const checkinsWithUsers = checkins.map(checkin => ({
+      ...checkin,
+      user: usersMap.get(checkin.user_id)
+    }));
+
+    res.json({
+      success: true,
+      data: checkinsWithUsers
+    });
+  } catch (error) {
+    console.error('Erro ao buscar check-ins para o mapa:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * GET /api/manifestations/my-checkins
+ * Listar check-ins do usuário logado em manifestações
+ */
+router.get('/my-checkins', authenticateUser, async (req, res) => {
+  try {
+    const { data: checkins, error } = await supabase
+      .from('geographic_checkins')
+      .select('manifestation_id, checked_in_at')
+      .eq('user_id', req.user.id);
+
+    if (error) {
+      console.error('Erro ao buscar check-ins do usuário:', error);
+      return res.status(500).json({ error: 'Erro ao buscar check-ins' });
+    }
+
+    res.json({
+      success: true,
+      data: checkins
+    });
+  } catch (error) {
+    console.error('Erro ao buscar check-ins do usuário:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

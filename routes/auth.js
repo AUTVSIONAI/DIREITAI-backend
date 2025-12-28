@@ -5,7 +5,7 @@ const router = express.Router();
 // Register new user
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, username, fullName, city, state } = req.body;
+    const { email, password, username, fullName, city, state, gender } = req.body;
 
     // Create user in Supabase Auth using Admin Client to bypass email confirmation
     const { data: authData, error: authError } = await adminSupabase.auth.admin.createUser({
@@ -33,6 +33,7 @@ router.post('/register', async (req, res) => {
           full_name: fullName,
           city: city || null,
           state: state || null,
+          gender: gender || null,
           plan: 'gratuito',
           points: 75, // 50 (Bem-vindo) + 25 (Primeiro Acesso)
           created_at: new Date().toISOString(),

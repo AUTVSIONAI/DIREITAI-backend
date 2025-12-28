@@ -1,0 +1,2 @@
+-- Migration to add gender column to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(50);
