@@ -67,6 +67,25 @@ router.put('/profile', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'Invalid full name' });
     }
 
+    if (updateData.username) {
+      // Check if username is taken by another user
+      const { data: existingUser, error: checkError } = await adminSupabase
+        .from('users')
+        .select('id')
+        .eq('username', updateData.username)
+        .neq('id', req.user.id)
+        .maybeSingle();
+      
+      if (checkError) {
+        console.error('Check username error:', checkError);
+        return res.status(500).json({ error: 'Error checking username availability' });
+      }
+
+      if (existingUser) {
+        return res.status(400).json({ error: 'Nome de usuário já está em uso.' });
+      }
+    }
+
     // Tentar atualizar por id da tabela; se não houver linha, tentar por auth_id
     let { data, error } = await adminSupabase
       .from('users')
