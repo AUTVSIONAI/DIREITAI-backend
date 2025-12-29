@@ -98,6 +98,7 @@ app.use((req, res, next) => {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/arenas', require('./routes/arenas'));
+app.use('/api/voice', require('./routes/voice')); // Proxy para serviço de voz local
 app.use('/api/rankings', require('./routes/rankings'));
 
 app.use('/api/events', require('./routes/events'));

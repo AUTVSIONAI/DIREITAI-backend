@@ -436,19 +436,38 @@ router.post('/checkout', authenticateUser, async (req, res) => {
     const shipping = subtotal > 100 ? 0 : 15;
     const total = subtotal + shipping;
 
+    // Helper to get absolute image URL
+    const getAbsoluteImageUrl = (imagePath) => {
+      if (!imagePath) return '';
+      if (imagePath.startsWith('http')) return imagePath;
+      
+      // If it's a Supabase storage path (usually just the path stored in DB)
+      // and we have a SUPABASE_URL, we can try to construct it.
+      // But typically local uploads or relative paths need the API URL.
+      const baseUrl = process.env.API_URL || process.env.FRONTEND_URL || 'https://direitai.com';
+      return `${baseUrl.replace(/\/$/, '')}/${imagePath.replace(/^\//, '')}`;
+    };
+
     // Create line items for Stripe
-    const lineItems = cartItems.map(item => ({
-      price_data: {
-        currency: 'brl',
-        product_data: {
-          name: item.products.name,
-          images: item.products.image ? [item.products.image] : 
-                item.products.images && Array.isArray(item.products.images) ? item.products.images.slice(0, 1) : [],
+    const lineItems = cartItems.map(item => {
+      const imgUrl = item.products.image 
+        ? getAbsoluteImageUrl(item.products.image)
+        : (item.products.images && Array.isArray(item.products.images) && item.products.images.length > 0)
+          ? getAbsoluteImageUrl(item.products.images[0])
+          : '';
+          
+      return {
+        price_data: {
+          currency: 'brl',
+          product_data: {
+            name: item.products.name,
+            images: imgUrl ? [imgUrl] : [],
+          },
+          unit_amount: Math.round((item.price || item.products.price) * 100), // Convert to cents
         },
-        unit_amount: Math.round((item.price || item.products.price) * 100), // Convert to cents
-      },
-      quantity: item.quantity,
-    }));
+        quantity: item.quantity,
+      };
+    });
 
     // Add shipping if applicable
     if (shipping > 0) {

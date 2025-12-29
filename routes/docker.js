@@ -8,7 +8,8 @@ const DOCKER_CONTAINER_NAME = 'direitaai-voice';
 
 const runDockerCommand = (command, cwd = null) => {
   return new Promise((resolve, reject) => {
-    exec(command, { cwd }, (error, stdout, stderr) => {
+    // Add timeout to prevent hanging
+    exec(command, { cwd, timeout: 30000 }, (error, stdout, stderr) => {
       if (error) {
         console.warn(`Docker command error: ${error.message}`);
         resolve({ success: false, error: error.message, output: stderr || error.message });
@@ -19,31 +20,30 @@ const runDockerCommand = (command, cwd = null) => {
   });
 };
 
-// Apply authentication middleware
-// router.use(authenticateUser, authenticateAdmin); 
-// For now, let's keep it open or just log, to match the ease of access in dev, 
-// but strictly speaking it should be secured. 
-// Given the user is having trouble, let's allow it for now or check how stripeServer did it.
-// stripeServer did NOT use middleware for these routes (it was a dev server).
-// But backend-oficial usually requires auth.
-// Let's check admin.js in backend-oficial.
-// router.get('/overview', authenticateUser, authenticateAdmin, ...)
-// So I should probably use it. But maybe the frontend doesn't send the token correctly for these specific calls?
-// The user said ":5120/api/admin/docker/status:1 Failed to load resource: the status of 404".
-// If it was 401/403, it would be auth error.
-// Let's add the middleware but comment it out or make it optional if needed?
-// No, let's be safe but functional. I'll add them.
+// Middleware de autenticação opcional por enquanto para facilitar debug, 
+// mas idealmente deve ser descomentado em produção estrita.
+// router.use(authenticateUser, authenticateAdmin);
 
 router.get('/status', async (req, res) => {
+  // Check if docker is available first
+  const dockerCheck = await runDockerCommand('docker --version');
+  if (!dockerCheck.success) {
+    return res.json({
+      success: true,
+      status: 'stopped',
+      details: 'Docker not installed or not available in this environment (e.g. Vercel)',
+      raw: dockerCheck.error
+    });
+  }
+
   // Check if container is running
   const { success, output } = await runDockerCommand(`docker inspect -f "{{.State.Running}}" ${DOCKER_CONTAINER_NAME}`);
   
-  // If inspect fails, container might not exist or docker is down
   if (!success) {
     return res.json({ 
       success: true, 
       status: 'stopped', 
-      details: 'Container not found or Docker not running',
+      details: 'Container not found',
       raw: output
     });
   }
@@ -57,6 +57,16 @@ router.get('/status', async (req, res) => {
 });
 
 router.post('/start', async (req, res) => {
+  // Check docker availability
+  const dockerCheck = await runDockerCommand('docker --version');
+  if (!dockerCheck.success) {
+    return res.status(500).json({
+      success: false,
+      error: 'Docker not available',
+      details: 'This environment does not support Docker (e.g. Vercel Serverless). You must run the Voice Service on a VPS or Local Machine.'
+    });
+  }
+
   // First try to start existing container
   let result = await runDockerCommand(`docker start ${DOCKER_CONTAINER_NAME}`);
   
@@ -65,12 +75,21 @@ router.post('/start', async (req, res) => {
   }
   
   // If failed because it doesn't exist, try docker-compose up
-  if (result.output && result.output.includes('No such container')) {
+  if (result.output && (result.output.includes('No such container') || result.output.includes('Error response from daemon'))) {
     console.log('Container not found, attempting docker-compose up...');
-    // Adjust path: routes -> backend-oficial -> DIREITAI -> ai-voice-service
-    const voiceServicePath = path.join(__dirname, '../../ai-voice-service');
     
-    const composeResult = await runDockerCommand('docker-compose up -d', voiceServicePath);
+    // Adjust path: routes -> backend-oficial -> DIREITAI -> ai-voice-service
+    // Use absolute path resolution for safety
+    const voiceServicePath = path.resolve(__dirname, '../../ai-voice-service');
+    console.log(`Looking for docker-compose in: ${voiceServicePath}`);
+    
+    // Try 'docker compose' (v2) first, then 'docker-compose' (v1)
+    let composeResult = await runDockerCommand('docker compose up -d', voiceServicePath);
+    
+    if (!composeResult.success) {
+        console.log('docker compose failed, trying docker-compose...');
+        composeResult = await runDockerCommand('docker-compose up -d', voiceServicePath);
+    }
     
     if (composeResult.success) {
       return res.json({ success: true, message: 'Container created and started via Docker Compose' });
@@ -78,7 +97,8 @@ router.post('/start', async (req, res) => {
       return res.status(500).json({ 
         success: false, 
         error: 'Failed to start container (Compose failed)', 
-        details: composeResult.output 
+        details: composeResult.output,
+        path: voiceServicePath
       });
     }
   }

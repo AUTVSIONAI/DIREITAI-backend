@@ -113,7 +113,13 @@ router.get('/:id', async (req, res) => {
       .eq('id', id)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Arena não encontrada' });
+      }
+      throw error;
+    }
+    
     if (!data) return res.status(404).json({ error: 'Arena não encontrada' });
 
     res.json(data);
