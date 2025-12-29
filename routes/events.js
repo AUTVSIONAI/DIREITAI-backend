@@ -300,7 +300,7 @@ router.post('/', authenticateUser, authenticateAdmin, async (req, res) => {
     // Inserir evento no banco de dados
     console.log('💾 Inserting event data:', JSON.stringify(eventData, null, 2));
     
-    const { data: event, error } = await supabase
+    const { data: event, error } = await adminSupabase
       .from('events')
       .insert(eventData)
       .select()

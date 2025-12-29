@@ -484,12 +484,13 @@ router.post('/checkout', authenticateUser, async (req, res) => {
     }
 
     // Create Stripe checkout session
+    const frontendUrl = process.env.FRONTEND_URL || 'https://direitai.com';
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: lineItems,
       mode: 'payment',
-      success_url: `${process.env.FRONTEND_URL || 'http://localhost:5121'}/store/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5121'}/store`,
+      success_url: `${frontendUrl}/store/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${frontendUrl}/store`,
       metadata: {
         userId: userId,
         type: 'store_purchase',
@@ -503,11 +504,8 @@ router.post('/checkout', authenticateUser, async (req, res) => {
     });
 
     res.json({
-      success: true,
-      data: {
-        sessionId: session.id,
-        url: session.url
-      }
+      sessionId: session.id,
+      url: session.url
     });
 
   } catch (error) {

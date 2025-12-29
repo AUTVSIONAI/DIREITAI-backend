@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabase } = require('../config/supabase');
+const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
@@ -74,7 +74,7 @@ router.post('/geographic', authenticateUser, async (req, res) => {
     }
 
     // Create check-in record
-    const { data: checkin, error: checkinError } = await supabase
+    const { data: checkin, error: checkinError } = await adminSupabase
       .from('checkins')
       .insert([
         {
@@ -146,7 +146,7 @@ router.post('/', authenticateUser, async (req, res) => {
     }
 
     // Get event details
-    const { data: event, error: eventError } = await supabase
+    const { data: event, error: eventError } = await adminSupabase
       .from('events')
       .select('*')
       .eq('id', event_id)
@@ -167,7 +167,7 @@ router.post('/', authenticateUser, async (req, res) => {
     }
 
     // Check if user already checked in
-    const { data: existingCheckin } = await supabase
+    const { data: existingCheckin } = await adminSupabase
       .from('checkins')
       .select('*')
       .eq('user_id', userId)
@@ -179,7 +179,7 @@ router.post('/', authenticateUser, async (req, res) => {
     }
 
     // Check event capacity
-    const { count: currentCheckins } = await supabase
+    const { count: currentCheckins } = await adminSupabase
       .from('checkins')
       .select('*', { count: 'exact', head: true })
       .eq('event_id', event_id);
@@ -189,7 +189,7 @@ router.post('/', authenticateUser, async (req, res) => {
     }
 
     // Create check-in record
-    const { data: checkin, error: checkinError } = await supabase
+    const { data: checkin, error: checkinError } = await adminSupabase
       .from('checkins')
       .insert([
         {
@@ -226,13 +226,13 @@ router.post('/', authenticateUser, async (req, res) => {
     }
 
     // Update user's total points
-    const { data: currentUser } = await supabase
+    const { data: currentUser } = await adminSupabase
       .from('users')
       .select('points')
       .eq('id', userId)
       .single();
 
-    await supabase
+    await adminSupabase
       .from('users')
       .update({ points: (currentUser?.points || 0) + pointsAwarded })
       .eq('id', userId);
