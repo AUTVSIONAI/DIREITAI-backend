@@ -1,84 +1,106 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const FormData = require('form-data');
 const multer = require('multer');
+const minimaxService = require('../services/minimax');
+const { adminSupabase } = require('../config/supabase');
+const { authenticateUser } = require('../middleware/auth');
 
 // Configure multer for handling file uploads in memory
-const upload = multer({ storage: multer.memoryStorage() });
-
-const VOICE_SERVICE_URL = process.env.VOICE_SERVICE_URL || 'http://localhost:8005';
-
-// Proxy middleware for checking if service is available
-router.get('/health', async (req, res) => {
-  try {
-    const response = await axios.get(`${VOICE_SERVICE_URL}/docs`);
-    res.json({ status: 'ok', service: 'connected' });
-  } catch (error) {
-    res.status(503).json({ status: 'error', message: 'Voice service unavailable', error: error.message });
-  }
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 } // 20MB limit
 });
 
-// Proxy for listing voices
-router.get('/voices', async (req, res) => {
+/**
+ * Upload de áudio e clonagem de voz
+ */
+router.post('/clone', authenticateUser, upload.single('file'), async (req, res) => {
   try {
-    const response = await axios.get(`${VOICE_SERVICE_URL}/voices`);
-    res.json(response.data);
-  } catch (error) {
-    console.error('Error fetching voices:', error.message);
-    res.status(502).json({ error: 'Failed to fetch voices from local service' });
-  }
-});
-
-// Proxy for cloning/TTS
-router.post('/clone-speech', upload.single('speaker_wav'), async (req, res) => {
-  try {
-    const { text, language } = req.body;
+    const { politician_id, voice_name } = req.body;
     
-    if (!req.file && !req.body.speaker_wav) {
-      return res.status(400).json({ error: 'Missing speaker_wav file' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'Arquivo de áudio é obrigatório' });
     }
 
-    const formData = new FormData();
-    formData.append('text', text);
-    formData.append('language', language || 'pt');
-    
-    // Append the file
-    if (req.file) {
-      formData.append('speaker_wav', req.file.buffer, {
-        filename: req.file.originalname,
-        contentType: req.file.mimetype,
-      });
+    if (!politician_id) {
+      return res.status(400).json({ error: 'ID do político é obrigatório' });
     }
 
-    const response = await axios.post(`${VOICE_SERVICE_URL}/clone-speech`, formData, {
-      headers: {
-        ...formData.getHeaders(),
-      },
-      responseType: 'arraybuffer' // Important for audio
+    // 1. Upload do arquivo para o MiniMax
+    const fileId = await minimaxService.uploadFile(
+      req.file.buffer, 
+      req.file.originalname
+    );
+
+    // 2. Clonar a voz
+    // Gerar um ID de voz único baseado no nome ou ID
+    const customVoiceId = `voice_${politician_id}_${Date.now()}`;
+    const cloneResult = await minimaxService.cloneVoice(fileId, customVoiceId);
+
+    // 3. Atualizar o político no banco de dados com o voice_id
+    // Precisamos saber onde salvar. Assumindo que politicians tem um campo jsonb 'voice_config'
+    // Ou atualizando politician_agents
+    
+    // Buscar config atual
+    const { data: politician, error: fetchError } = await adminSupabase
+      .from('politicians')
+      .select('voice_config')
+      .eq('id', politician_id)
+      .single();
+
+    if (fetchError) {
+      console.error('Erro ao buscar político:', fetchError);
+      // Não falha a requisição principal, mas avisa
+    }
+
+    const newConfig = {
+      ...(politician?.voice_config || {}),
+      provider: 'minimax',
+      voice_id: cloneResult.voice_id || customVoiceId,
+      file_id: fileId,
+      last_updated: new Date().toISOString()
+    };
+
+    const { error: updateError } = await adminSupabase
+      .from('politicians')
+      .update({ voice_config: newConfig })
+      .eq('id', politician_id);
+
+    if (updateError) {
+      throw new Error(`Erro ao salvar no banco: ${updateError.message}`);
+    }
+
+    res.json({
+      success: true,
+      voice_id: cloneResult.voice_id || customVoiceId,
+      details: cloneResult
     });
 
-    // Forward the audio
-    res.set('Content-Type', 'audio/wav');
-    res.send(response.data);
-
   } catch (error) {
-    console.error('Error in clone-speech proxy:', error.message);
-    res.status(500).json({ error: 'Voice generation failed', details: error.message });
+    console.error('Erro na rota de clonagem:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Proxy for direct TTS (no clone) if available
-router.post('/tts', async (req, res) => {
+/**
+ * Geração de áudio (TTS)
+ */
+router.post('/tts', authenticateUser, async (req, res) => {
   try {
-    const response = await axios.post(`${VOICE_SERVICE_URL}/tts`, req.body, {
-      responseType: 'arraybuffer'
-    });
-    res.set('Content-Type', 'audio/wav');
-    res.send(response.data);
+    const { text, voice_id } = req.body;
+
+    if (!text || !voice_id) {
+      return res.status(400).json({ error: 'Texto e voice_id são obrigatórios' });
+    }
+
+    const audioBuffer = await minimaxService.generateSpeech(text, voice_id);
+
+    res.set('Content-Type', 'audio/mpeg');
+    res.send(audioBuffer);
+
   } catch (error) {
-    console.error('Error in TTS proxy:', error.message);
-    res.status(500).json({ error: 'TTS failed', details: error.message });
+    console.error('Erro na rota TTS:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

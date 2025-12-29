@@ -105,7 +105,6 @@ app.use('/api/events', require('./routes/events'));
 app.use('/api/checkins', require('./routes/checkins'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/store', require('./routes/store'));
-app.use('/api/admin/docker', require('./routes/docker'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin/content-moderation', require('./routes/contentModeration'));
 app.use('/api/admin/financial', require('./routes/financialReports'));
