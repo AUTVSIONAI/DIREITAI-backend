@@ -176,37 +176,70 @@ router.get('/users/:userId/stats', authenticateUser, async (req, res) => {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
-    // Buscar pontos do usuário
-    const { data: pointsData } = await adminSupabase
-      .from('points')
-      .select('amount')
-      .eq('user_id', resolvedUserId);
+    // Buscar auth_id para garantir que pegamos todos os checkins (alguns podem estar ligados ao auth_id)
+    const { data: userData } = await adminSupabase
+      .from('users')
+      .select('auth_id, points')
+      .eq('id', resolvedUserId)
+      .single();
+    
+    const authId = userData?.auth_id;
+    let userFilter = `user_id.eq.${resolvedUserId}`;
+    if (authId) {
+      userFilter += `,user_id.eq.${authId}`;
+    }
 
-    const totalPoints = pointsData?.reduce((sum, point) => sum + point.amount, 0) || 0;
+    // Usar points da tabela users como fonte principal de verdade para consistência com o ranking
+    // Se for 0, tentamos calcular da tabela points como fallback
+    let totalPoints = userData?.points || 0;
+
+    if (totalPoints === 0) {
+      const { data: pointsData } = await adminSupabase
+        .from('points')
+        .select('amount')
+        .or(userFilter);
+        
+      totalPoints = pointsData?.reduce((sum, point) => sum + point.amount, 0) || 0;
+    }
 
     // Buscar badges do usuário
     const { count: badgesCount } = await adminSupabase
       .from('badges')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', resolvedUserId);
+      .or(userFilter);
 
-    // Buscar check-ins do usuário
+    // Buscar check-ins do usuário (usando OR para pegar por ID público ou Auth ID)
     const { count: checkinsCount } = await adminSupabase
       .from('checkins')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', resolvedUserId);
+      .or(userFilter);
+
+    // Buscar check-ins geográficos do usuário
+    const { count: geoCheckinsCount } = await adminSupabase
+      .from('geographic_checkins')
+      .select('*', { count: 'exact', head: true })
+      .or(userFilter);
 
     // Buscar conversas de IA do usuário
     const { count: conversationsCount } = await adminSupabase
       .from('ai_conversations')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', resolvedUserId);
+      .or(userFilter);
 
+    // Calcular Posição no Ranking (Global)
+    const { count: usersAbove } = await adminSupabase
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .gt('points', totalPoints);
+      
+    const rankingPosition = (usersAbove || 0) + 1;
+    
     res.json({
       points: totalPoints,
       badges: badgesCount || 0,
-      checkins: checkinsCount || 0,
+      checkins: (checkinsCount || 0) + (geoCheckinsCount || 0),
       conversations: conversationsCount || 0,
+      ranking: rankingPosition,
       level: Math.floor(totalPoints / 100) + 1,
       nextLevelPoints: ((Math.floor(totalPoints / 100) + 1) * 100) - totalPoints
     });

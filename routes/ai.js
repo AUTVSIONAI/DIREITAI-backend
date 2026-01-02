@@ -109,10 +109,14 @@ router.get('/creative-ai/usage', authenticateUser, async (req, res) => {
 
     const generationLimits = {
       gratuito: 5,
+      patriota: 10,
       cidadao: 20,
+      engajado: 50,
       premium: 50,
       pro: 100,
-      elite: 100
+      elite: 100,
+      vip: -1,
+      lider: -1
     };
 
     const limit = generationLimits[userPlan] || generationLimits.gratuito;
@@ -306,10 +310,14 @@ router.post('/creative-ai/generate', authenticateUser, async (req, res) => {
 
     const limits = {
       gratuito: 5,
+      patriota: 10,
       cidadao: 20,
+      engajado: 50,
       premium: 50,
       pro: 100,
-      elite: 100
+      elite: 100,
+      vip: -1,
+      lider: -1
     };
 
     const userLimit = limits[userProfile?.plan] || 5;
@@ -418,10 +426,14 @@ router.post('/generate', authenticateUser, async (req, res) => {
 
     const limits = {
       gratuito: 5,
+      patriota: 10,
       cidadao: 20,
+      engajado: 50,
       premium: 50,
       pro: 100,
-      elite: 100
+      elite: 100,
+      vip: -1,
+      lider: -1
     };
 
     const userLimit = limits[userProfile?.plan] || 0;

@@ -16,7 +16,7 @@ router.get('/', optionalAuthenticateUser, async (req, res) => {
     const { data: announcements, error } = await adminSupabase
       .from('announcements')
       .select('*')
-      .eq('active', true)
+      .eq('is_active', true)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -53,6 +53,49 @@ router.get('/', optionalAuthenticateUser, async (req, res) => {
     res.json(filtered);
   } catch (error) {
     console.error('Erro ao buscar anúncios:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Obter estatísticas do anúncio
+router.get('/:id/stats', authenticateUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Buscar contadores do anúncio
+    const { data: announcement, error } = await adminSupabase
+      .from('announcements')
+      .select('view_count, click_count, dismiss_count')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.error('Erro ao buscar estatísticas do anúncio:', error);
+      return res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+
+    if (!announcement) {
+      return res.status(404).json({ error: 'Anúncio não encontrado' });
+    }
+
+    const views = announcement.view_count || 0;
+    const clicks = announcement.click_count || 0;
+    const dismissals = announcement.dismiss_count || 0;
+    
+    // Calcular taxas
+    const ctr = views > 0 ? ((clicks / views) * 100).toFixed(2) : 0;
+    const dismissalRate = views > 0 ? ((dismissals / views) * 100).toFixed(2) : 0;
+
+    res.json({
+      views,
+      clicks,
+      dismissals,
+      ctr: parseFloat(ctr),
+      clickRate: parseFloat(ctr), // Alias para consistência com frontend
+      dismissalRate: parseFloat(dismissalRate)
+    });
+  } catch (error) {
+    console.error('Erro ao buscar estatísticas do anúncio:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
@@ -102,13 +145,17 @@ router.post('/:id/dismiss', authenticateUser, async (req, res) => {
     // Registrar dispensa
     await adminSupabase
       .from('announcement_dismissals')
-      .insert({ announcement_id: id, user_id: userId })
+      .upsert(
+        { announcement_id: id, user_id: userId },
+        { onConflict: 'announcement_id, user_id', ignoreDuplicates: true }
+      )
       .select();
 
     // Incrementar contador de dispensas
-    await adminSupabase
-      .rpc('increment_announcement_dismiss', { announcement_id_input: id })
-      .catch(async (rpcError) => {
+    const { error: rpcError } = await adminSupabase
+      .rpc('increment_announcement_dismiss', { announcement_id_input: id });
+
+    if (rpcError) {
         console.warn(`[Announcements] RPC increment_announcement_dismiss falhou para ${id}. Erro: ${rpcError.message}. Tentando fallback...`);
 
         const { data: current, error: selectError } = await adminSupabase
@@ -132,7 +179,7 @@ router.post('/:id/dismiss', authenticateUser, async (req, res) => {
           console.error(`[Announcements] Fallback update (dismiss) falhou: ${updateError.message}`);
           return; // Ignorar erro
         }
-      });
+    }
 
     res.status(204).send();
   } catch (error) {
@@ -156,10 +203,22 @@ router.post('/:id/click', optionalAuthenticateUser, async (req, res) => {
       return res.status(404).json({ error: 'Anúncio não encontrado' });
     }
 
+    // Registrar clique no anúncio (tabela de rastreamento)
+    if (req.user && req.user.id) {
+      const { error: clickError } = await adminSupabase
+        .from('announcement_clicks')
+        .insert({ announcement_id: id, user_id: req.user.id });
+        
+      if (clickError) {
+        console.warn(`[Announcements] Erro ao registrar click tracking: ${clickError.message}`);
+      }
+    }
+
     // Incrementar contador de cliques
-    await adminSupabase
-      .rpc('increment_announcement_click', { announcement_id_input: id })
-      .catch(async (rpcError) => {
+    const { error: rpcError } = await adminSupabase
+      .rpc('increment_announcement_click', { announcement_id_input: id });
+
+    if (rpcError) {
         console.warn(`[Announcements] RPC increment_announcement_click falhou para ${id}. Erro: ${rpcError.message}. Tentando fallback...`);
 
         const { data: current, error: selectError } = await adminSupabase
@@ -183,7 +242,7 @@ router.post('/:id/click', optionalAuthenticateUser, async (req, res) => {
           console.error(`[Announcements] Fallback update (click) falhou: ${updateError.message}`);
           return; // Ignorar erro
         }
-      });
+    }
 
     res.status(204).send();
   } catch (error) {
@@ -206,23 +265,39 @@ router.post('/:id/view', optionalAuthenticateUser, async (req, res) => {
       return res.status(404).json({ error: 'Anúncio não encontrado' });
     }
 
-    // Incrementar contador de visualizações
-    await adminSupabase
-      .rpc('increment_announcement_view', { announcement_id_input: id })
-      .catch(async (rpcError) => {
-        console.warn(`[Announcements] RPC increment_announcement_view falhou para ${id}. Erro: ${rpcError.message}. Tentando fallback...`);
-        
-        const { data: current, error: selectError } = await adminSupabase
-          .from('announcements')
-          .select('view_count')
-          .eq('id', id)
-          .single();
-          
-        if (selectError) {
-          console.error(`[Announcements] Fallback select falhou: ${selectError.message}`);
-          return; // Ignorar erro
-        }
+    // Registrar visualização na tabela de rastreamento
+    if (req.user && req.user.id) {
+      const { error: viewError } = await adminSupabase
+        .from('announcement_views')
+        .upsert(
+          { announcement_id: id, user_id: req.user.id },
+          { onConflict: 'announcement_id, user_id', ignoreDuplicates: true }
+        );
 
+      if (viewError) {
+         // Ignorar erro de duplicidade se a view for única por user/announcement (depende da constraint)
+         // Se não for única, vai inserir.
+         console.warn(`[Announcements] Erro ao registrar view tracking: ${viewError.message}`);
+      }
+    }
+
+    // Incrementar contador de visualizações
+    const { error: rpcError } = await adminSupabase
+      .rpc('increment_announcement_view', { announcement_id_input: id });
+
+    if (rpcError) {
+      console.warn(`[Announcements] RPC increment_announcement_view falhou para ${id}. Erro: ${rpcError.message}. Tentando fallback...`);
+      
+      const { data: current, error: selectError } = await adminSupabase
+        .from('announcements')
+        .select('view_count')
+        .eq('id', id)
+        .single();
+        
+      if (selectError) {
+        console.error(`[Announcements] Fallback select falhou: ${selectError.message}`);
+        // Não retornar erro
+      } else {
         const next = (current?.view_count || 0) + 1;
         const { error: updateError } = await adminSupabase
           .from('announcements')
@@ -231,9 +306,9 @@ router.post('/:id/view', optionalAuthenticateUser, async (req, res) => {
           
         if (updateError) {
           console.error(`[Announcements] Fallback update falhou: ${updateError.message}`);
-          return; // Ignorar erro
         }
-      });
+      }
+    }
 
     res.status(204).send();
   } catch (error) {
@@ -326,7 +401,9 @@ router.post('/admin', authenticateUser, requireAdmin, async (req, res) => {
       styling,
       priority = 'medium',
       start_date,
-      end_date
+      end_date,
+      active, // Frontend envia 'active'
+      is_active // Backend espera 'is_active'
     } = req.body;
 
     const createdBy = req.user.id;
@@ -339,6 +416,8 @@ router.post('/admin', authenticateUser, requireAdmin, async (req, res) => {
     if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
       return res.status(400).json({ error: 'A data de início deve ser anterior à data de término' });
     }
+
+    const isActive = is_active !== undefined ? is_active : (active !== undefined ? active : true);
 
     const { data, error } = await adminSupabase
       .from('announcements')
@@ -359,7 +438,7 @@ router.post('/admin', authenticateUser, requireAdmin, async (req, res) => {
         start_date: start_date || new Date().toISOString(),
         end_date: end_date || null,
         created_by: createdBy,
-        is_active: true,
+        is_active: isActive,
         view_count: 0,
         click_count: 0,
         dismiss_count: 0
@@ -396,14 +475,15 @@ router.put('/admin/:id', authenticateUser, requireAdmin, async (req, res) => {
       action,
       styling,
       is_active,
+      active,
       priority,
       start_date,
       end_date
     } = req.body;
 
-    const { data, error } = await adminSupabase
-      .from('announcements')
-      .update({
+    const isActive = is_active !== undefined ? is_active : active;
+
+    const updateData = {
         title,
         message,
         content: message,
@@ -416,12 +496,20 @@ router.put('/admin/:id', authenticateUser, requireAdmin, async (req, res) => {
         display_rules,
         action,
         styling,
-        is_active,
         priority,
         start_date,
         end_date: end_date || null,
         updated_at: new Date().toISOString()
-      })
+    };
+
+    if (isActive !== undefined) {
+      updateData.is_active = isActive;
+      updateData.active = isActive; // Sync active column
+    }
+
+    const { data, error } = await adminSupabase
+      .from('announcements')
+      .update(updateData)
       .eq('id', id)
       .select()
       .single();
@@ -471,7 +559,7 @@ router.patch('/admin/:id/toggle', authenticateUser, requireAdmin, async (req, re
     const next = !current?.is_active;
     const { data, error } = await adminSupabase
       .from('announcements')
-      .update({ is_active: next, updated_at: new Date().toISOString() })
+      .update({ is_active: next, active: next, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single();
@@ -491,6 +579,8 @@ router.patch('/admin/:id/toggle', authenticateUser, requireAdmin, async (req, re
 router.get('/admin/:id/stats', authenticateUser, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // 1. Obter dados agregados da tabela announcements
     const { data: a, error } = await adminSupabase
       .from('announcements')
       .select('id,title,view_count,click_count,dismiss_count,created_at')
@@ -501,11 +591,33 @@ router.get('/admin/:id/stats', authenticateUser, requireAdmin, async (req, res) 
       return res.status(404).json({ error: 'Anúncio não encontrado' });
     }
 
-    const views = a.view_count || 0;
-    const clicks = a.click_count || 0;
-    const dismissals = a.dismiss_count || 0;
+    // 2. Obter contagens reais das tabelas de rastreamento (para corrigir possíveis desincronias)
+    // Usamos Promise.all para paralelizar
+    const [viewsResult, clicksResult, dismissalsResult] = await Promise.all([
+        adminSupabase.from('announcement_views').select('*', { count: 'exact', head: true }).eq('announcement_id', id),
+        adminSupabase.from('announcement_clicks').select('*', { count: 'exact', head: true }).eq('announcement_id', id),
+        adminSupabase.from('announcement_dismissals').select('*', { count: 'exact', head: true }).eq('announcement_id', id)
+    ]);
+
+    // 3. Usar o maior valor entre o contador agregado e a contagem real
+    // Isso garante que não perdemos dados de visitantes anônimos (que estão apenas no agregado)
+    // mas também garante que cliques rastreados não sejam ignorados se o agregado falhar
+    const trackedViews = viewsResult.count || 0;
+    const trackedClicks = clicksResult.count || 0;
+    const trackedDismissals = dismissalsResult.count || 0;
+
+    let views = Math.max(a.view_count || 0, trackedViews);
+    const clicks = Math.max(a.click_count || 0, trackedClicks);
+    const dismissals = Math.max(a.dismiss_count || 0, trackedDismissals);
+
+    // Ensure views >= clicks (a click implies a view)
+    if (clicks > views) {
+        views = clicks;
+    }
+
     const click_rate = views > 0 ? Math.round((clicks / views) * 10000) / 100 : 0;
     const dismiss_rate = views > 0 ? Math.round((dismissals / views) * 10000) / 100 : 0;
+    
     res.json({
       id: a.id,
       title: a.title,
@@ -514,7 +626,14 @@ router.get('/admin/:id/stats', authenticateUser, requireAdmin, async (req, res) 
       dismiss_count: dismissals,
       created_at: a.created_at,
       click_rate,
-      dismiss_rate
+      dismiss_rate,
+      clickRate: click_rate, // Alias camelCase
+      dismissalRate: dismiss_rate, // Alias camelCase
+      // Debug info (opcional, pode ser removido depois)
+      _debug: {
+        aggregate: { views: a.view_count, clicks: a.click_count, dismissals: a.dismiss_count },
+        tracked: { views: trackedViews, clicks: trackedClicks, dismissals: trackedDismissals }
+      }
     });
   } catch (error) {
     console.error('Erro ao buscar estatísticas do anúncio:', error);

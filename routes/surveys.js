@@ -235,6 +235,72 @@ router.get('/results', async (req, res) => {
   }
 });
 
+// Rota para compartilhamento social (WhatsApp/Facebook) - DEVE vir antes de /:id
+router.get('/social/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: survey, error } = await supabase
+      .from('pesquisas')
+      .select('titulo, descricao, imagem_url')
+      .eq('id', id)
+      .single();
+
+    if (error || !survey) {
+      return res.status(404).send('Pesquisa não encontrada');
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'https://direitai.com';
+    const redirectUrl = `${frontendUrl}/pesquisas/${id}`;
+    
+    // Resolver URL da imagem
+    let imageUrl = survey.imagem_url || `${frontendUrl}/logo.png`;
+    if (imageUrl && !imageUrl.startsWith('http')) {
+       const backendUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+       imageUrl = `${backendUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+    }
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8">
+        <title>${survey.titulo} | DireitAI</title>
+        <meta name="description" content="${survey.descricao || 'Participe desta pesquisa no DireitaAI'}">
+        
+        <!-- Open Graph / Facebook / WhatsApp -->
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="${redirectUrl}">
+        <meta property="og:title" content="${survey.titulo}">
+        <meta property="og:description" content="${survey.descricao || 'Participe desta pesquisa no DireitaAI'}">
+        <meta property="og:image" content="${imageUrl}">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta property="og:site_name" content="DireitAI">
+        
+        <!-- Twitter -->
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="${survey.titulo}">
+        <meta name="twitter:description" content="${survey.descricao || 'Participe desta pesquisa no DireitaAI'}">
+        <meta name="twitter:image" content="${imageUrl}">
+        
+        <!-- Redirecionamento -->
+        <script>
+          window.location.href = "${redirectUrl}";
+        </script>
+      </head>
+      <body>
+        <p>Redirecionando para a pesquisa: <a href="${redirectUrl}">${survey.titulo}</a>...</p>
+      </body>
+      </html>
+    `;
+    
+    res.send(html);
+  } catch (error) {
+    console.error('Erro ao gerar preview social:', error);
+    res.status(500).send('Erro interno do servidor');
+  }
+});
+
 // Buscar pesquisa específica por ID
 router.get('/:id', async (req, res) => {
   try {

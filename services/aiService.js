@@ -40,10 +40,14 @@ function analyzeImageMetadata(dataUrl) {
 // Limites por plano
 const PLAN_LIMITS = {
   gratuito: -1, // ilimitado para chat básico
-  cidadao: -1, // ilimitado para chat
-  premium: -1, // ilimitado para chat
-  pro: -1, // ilimitado para chat
-  elite: -1 // ilimitado para chat
+  patriota: -1,
+  cidadao: -1,
+  engajado: -1,
+  premium: -1,
+  pro: -1,
+  elite: -1,
+  vip: -1,
+  lider: -1
 };
 
 // Verificar limites de uso do usuário

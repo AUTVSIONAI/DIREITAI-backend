@@ -2,6 +2,8 @@ const express = require('express');
 const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser, authenticateAdmin } = require('../middleware/auth');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 
 
 
@@ -33,24 +35,52 @@ router.get('/', async (req, res) => {
       query = query.eq('status', status);
     }
 
+    // Busca textual (search) - movido para o banco de dados
+    if (req.query.search) {
+      const searchTerm = req.query.search.replace(/,/g, ' '); // Sanitizar para evitar erro no PostgREST
+      query = query.or(`name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%,city.ilike.%${searchTerm}%`);
+    }
+
     const { data: manifestations, error } = await query;
 
-    // Aplicar filtros adicionais se necessário
-    let filteredManifestations = manifestations;
+    if (error) {
+      console.error('Erro ao buscar manifestações:', error);
+      return res.status(500).json({ error: 'Erro ao buscar manifestações' });
+    }
 
-    if (req.query.search) {
-      filteredManifestations = manifestations.filter(manifestation => {
-        const searchTerm = req.query.search.toLowerCase();
-        return manifestation.name.toLowerCase().includes(searchTerm) ||
-               manifestation.description?.toLowerCase().includes(searchTerm) ||
-               manifestation.city?.toLowerCase().includes(searchTerm);
+    if (!manifestations || manifestations.length === 0) {
+      return res.json({
+        success: true,
+        data: [],
+        total: 0
       });
     }
 
+    // Otimização: Buscar estatísticas em lote (Bulk Fetch) para evitar N+1 queries
+    const manifestationIds = manifestations.map(m => m.id);
+
+    const { data: allCheckins } = await adminSupabase
+      .from('geographic_checkins')
+      .select('manifestation_id')
+      .in('manifestation_id', manifestationIds);
+
+    // Agrupar contagens
+    const checkinCounts = {};
+    if (allCheckins) {
+      allCheckins.forEach(c => {
+        checkinCounts[c.manifestation_id] = (checkinCounts[c.manifestation_id] || 0) + 1;
+      });
+    }
+
+    const manifestationsWithStats = manifestations.map(manifestation => ({
+      ...manifestation,
+      checkin_count: checkinCounts[manifestation.id] || 0
+    }));
+
     res.json({
       success: true,
-      data: filteredManifestations,
-      total: filteredManifestations.length
+      data: manifestationsWithStats,
+      total: manifestationsWithStats.length // Nota: Paginação real exigiria count separado
     });
   } catch (error) {
     console.error('Erro ao listar manifestações:', error);
@@ -93,40 +123,56 @@ router.get('/admin', authenticateUser, authenticateAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Erro ao buscar manifestações' });
     }
 
-    // Buscar estatísticas de check-ins para cada manifestação
-    const manifestationsWithStats = await Promise.all(
-      manifestations.map(async (manifestation) => {
-        const { count: checkinCount } = await adminSupabase
-          .from('geographic_checkins')
-          .select('*', { count: 'exact', head: true })
-          .eq('manifestation_id', manifestation.id);
+    // Otimização: Bulk Fetch para evitar N+1 queries
+    const manifestationIds = manifestations.map(m => m.id);
+    const creatorIds = manifestations.map(m => m.created_by).filter(id => id); // Filtrar nulls
+    const uniqueCreatorIds = [...new Set(creatorIds)];
 
-        // Buscar contagem de RSVPs (presenças confirmadas)
-        const { count: rsvpCount } = await adminSupabase
-          .from('manifestation_rsvp')
-          .select('*', { count: 'exact', head: true })
-          .eq('manifestation_id', manifestation.id)
-          .eq('status', 'vai');
+    // Executar queries em paralelo
+    const [checkinsRes, rsvpsRes, creatorsRes] = await Promise.all([
+      adminSupabase
+        .from('geographic_checkins')
+        .select('manifestation_id')
+        .in('manifestation_id', manifestationIds),
+      adminSupabase
+        .from('manifestation_rsvp')
+        .select('manifestation_id')
+        .in('manifestation_id', manifestationIds)
+        .eq('status', 'vai'),
+      uniqueCreatorIds.length > 0 
+        ? adminSupabase.from('users').select('id, username, email').in('id', uniqueCreatorIds)
+        : { data: [] }
+    ]);
 
-        // Buscar dados do criador manualmente para evitar erros de FK
-        let createdByUser = null;
-        if (manifestation.created_by) {
-          const { data: userData } = await adminSupabase
-            .from('users')
-            .select('username, email')
-            .eq('id', manifestation.created_by)
-            .maybeSingle();
-          createdByUser = userData;
-        }
+    // Criar mapas para acesso rápido
+    const checkinCounts = {};
+    if (checkinsRes.data) {
+      checkinsRes.data.forEach(c => {
+        checkinCounts[c.manifestation_id] = (checkinCounts[c.manifestation_id] || 0) + 1;
+      });
+    }
 
-        return {
-          ...manifestation,
-          created_by_user: createdByUser,
-          checkin_count: checkinCount || 0,
-          rsvp_count: rsvpCount || 0
-        };
-      })
-    );
+    const rsvpCounts = {};
+    if (rsvpsRes.data) {
+      rsvpsRes.data.forEach(r => {
+        rsvpCounts[r.manifestation_id] = (rsvpCounts[r.manifestation_id] || 0) + 1;
+      });
+    }
+
+    const creatorsMap = {};
+    if (creatorsRes.data) {
+      creatorsRes.data.forEach(u => {
+        creatorsMap[u.id] = u;
+      });
+    }
+
+    // Mapear resultados
+    const manifestationsWithStats = manifestations.map(manifestation => ({
+      ...manifestation,
+      created_by_user: manifestation.created_by ? creatorsMap[manifestation.created_by] : null,
+      checkin_count: checkinCounts[manifestation.id] || 0,
+      rsvp_count: rsvpCounts[manifestation.id] || 0
+    }));
 
     res.json({
       success: true,
@@ -460,11 +506,21 @@ router.get('/checkins/map', authenticateUser, authenticateAdmin, async (req, res
     
     // Map users by auth_id since checkins.user_id is auth_id
     const usersMap = new Map((users || []).map(u => [u.auth_id, u]));
+
+    // Buscar dados das manifestações
+    const manifestationIds = [...new Set(checkins.map(c => c.manifestation_id))];
+    const { data: manifestations } = await adminSupabase
+      .from('manifestations')
+      .select('id, name, city, state')
+      .in('id', manifestationIds);
+
+    const manifestationsMap = new Map((manifestations || []).map(m => [m.id, m]));
     
-    // Adicionar dados do usuário
+    // Adicionar dados do usuário e manifestação
     const checkinsWithUsers = checkins.map(checkin => ({
       ...checkin,
-      user: usersMap.get(checkin.user_id)
+      user: usersMap.get(checkin.user_id) || { username: 'Usuário Desconhecido' },
+      manifestation: manifestationsMap.get(checkin.manifestation_id) || { name: 'Manifestação Desconhecida', city: '', state: '' }
     }));
 
     res.json({
@@ -520,6 +576,26 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 /**
+ * GET /api/manifestations/debug/checkins
+ * Lista check-ins para debug
+ */
+router.get('/debug/checkins', async (req, res) => {
+  try {
+    const { data, error } = await adminSupabase
+      .from('geographic_checkins')
+      .select('*')
+      .order('checked_in_at', { ascending: false })
+      .limit(20);
+      
+    if (error) throw error;
+    
+    res.json({ count: data.length, data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * POST /api/manifestations/:id/checkin
  * Fazer check-in em uma manifestação
  */
@@ -527,11 +603,34 @@ router.post('/:id/checkin', authenticateUser, async (req, res) => {
   try {
     const { id: manifestationId } = req.params;
     const { latitude, longitude, device_info } = req.body;
+    
+    // Log apenas no console para evitar erros de permissão de arquivo
+    console.log('CHECKIN_DEBUG: Request received', { 
+      manifestationId, 
+      latitude, 
+      longitude, 
+      userId: req.user?.id 
+    });
+
+    if (!req.user || !req.user.id) {
+      console.log('CHECKIN_DEBUG: User not authenticated correctly');
+      return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
 
     if (!latitude || !longitude) {
+      console.log('CHECKIN_DEBUG: Missing coordinates');
       return res.status(400).json({ error: 'Latitude e longitude são obrigatórias' });
     }
 
+    // Validar se são números válidos
+    const lat = parseFloat(latitude);
+    const lon = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lon)) {
+      console.log('CHECKIN_DEBUG: Invalid coordinates (NaN)', { latitude, longitude });
+      return res.status(400).json({ error: 'Latitude e longitude devem ser números válidos' });
+    }
+    
     // Verificar se a manifestação existe e está ativa
     const { data: manifestation, error: manifestationError } = await supabase
       .from('manifestations')
@@ -542,6 +641,7 @@ router.post('/:id/checkin', authenticateUser, async (req, res) => {
       .single();
 
     if (manifestationError || !manifestation) {
+      console.log('CHECKIN_DEBUG: Manifestation not found or inactive', manifestationError);
       return res.status(404).json({ error: 'Manifestação não encontrada ou inativa' });
     }
 
@@ -551,22 +651,32 @@ router.post('/:id/checkin', authenticateUser, async (req, res) => {
     const endDate = new Date(manifestation.end_date);
 
     if (now < startDate) {
+      console.log('CHECKIN_DEBUG: Manifestation not started', { now, startDate });
       return res.status(400).json({ error: 'Manifestação ainda não começou' });
     }
 
     if (now > endDate) {
+      console.log('CHECKIN_DEBUG: Manifestation ended', { now, endDate });
       return res.status(400).json({ error: 'Manifestação já terminou' });
     }
 
-    // Verificar se o usuário já fez check-in nesta manifestação
-    const { data: existingCheckin } = await adminSupabase
+    // Use auth_id for checkins as the table references auth.users
+    const userIdForCheckin = req.user.auth_id || req.user.id;
+
+    // Verificar se já fez check-in hoje
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const { data: existingCheckin, error: checkCheckinError } = await adminSupabase
       .from('geographic_checkins')
       .select('id')
-      .eq('user_id', req.user.id)
+      .eq('user_id', userIdForCheckin)
       .eq('manifestation_id', manifestationId)
+      .gte('checked_in_at', startOfDay.toISOString())
       .single();
 
     if (existingCheckin) {
+      console.log('CHECKIN_DEBUG: Already checked in', existingCheckin);
       return res.status(400).json({ error: 'Você já fez check-in nesta manifestação' });
     }
 
@@ -578,6 +688,7 @@ router.post('/:id/checkin', authenticateUser, async (req, res) => {
 
     // Verificar se está dentro do raio permitido
     if (distance > manifestation.radius) {
+      console.log('CHECKIN_DEBUG: Too far', { distance, radius: manifestation.radius });
       return res.status(400).json({ 
         error: 'Você está muito longe da manifestação',
         distance: Math.round(distance),
@@ -600,29 +711,59 @@ router.post('/:id/checkin', authenticateUser, async (req, res) => {
     // Criar check-in
     // Truncar coordenadas para evitar overflow se o esquema do banco estiver incorreto (ex: NUMERIC(8,2))
     // Mas o ideal é rodar o script de migração para DOUBLE PRECISION
-    const lat = parseFloat(latitude);
-    const lon = parseFloat(longitude);
+    // Já validamos lat/lon acima
     
     const checkinData = {
-      user_id: req.user.id,
+      user_id: userIdForCheckin,
       manifestation_id: manifestationId,
       latitude: lat,
       longitude: lon,
       device_info: device_info || {},
-      ip_address: req.ip,
-      user_agent: req.get('User-Agent'),
+      ip_address: req.ip || '0.0.0.0',
+      user_agent: req.get('User-Agent') || 'Unknown',
       checked_in_at: new Date().toISOString()
     };
 
+    console.log('[DEBUG] Tentando inserir check-in:', JSON.stringify(checkinData));
+
     // Usar adminSupabase para garantir que o check-in seja salvo
-    const { data: checkin, error: checkinError } = await adminSupabase
-      .from('geographic_checkins')
-      .insert([checkinData])
-      .select()
-      .single();
+    let checkinResult;
+    try {
+      checkinResult = await adminSupabase
+        .from('geographic_checkins')
+        .insert([checkinData])
+        .select()
+        .single();
+    } catch (err) {
+      // Captura erros de rede ou outros erros síncronos se houver
+      checkinResult = { error: err };
+    }
+
+    let { data: checkin, error: checkinError } = checkinResult;
+
+    // Se falhar com erro de FK (23503), tentar usar auth_id se for diferente de id
+    if (checkinError && checkinError.code === '23503' && checkinError.message.includes('user_id')) {
+       console.log('[DEBUG] FK violation with user.id, trying auth_id...');
+       if (req.user.auth_id && req.user.auth_id !== req.user.id) {
+         const fallbackData = { ...checkinData, user_id: req.user.auth_id };
+         const fallbackResult = await adminSupabase
+            .from('geographic_checkins')
+            .insert([fallbackData])
+            .select()
+            .single();
+            
+         if (!fallbackResult.error) {
+           console.log('[DEBUG] Success using auth_id!');
+           checkin = fallbackResult.data;
+           checkinError = null;
+         } else {
+           console.log('[DEBUG] Failed with auth_id too:', fallbackResult.error);
+         }
+       }
+    }
 
     if (checkinError) {
-      console.error('Erro ao criar check-in:', checkinError);
+      console.error('[DEBUG] Erro ao criar check-in (Supabase):', checkinError);
       
       // Tratamento específico para erro de overflow
       if (checkinError.code === '22003') { // numeric_value_out_of_range
@@ -632,8 +773,10 @@ router.post('/:id/checkin', authenticateUser, async (req, res) => {
          });
       }
       
-      return res.status(500).json({ error: 'Erro ao fazer check-in' });
+      return res.status(500).json({ error: 'Erro ao fazer check-in', details: checkinError.message });
     }
+
+    console.log('[DEBUG] Check-in inserido com sucesso:', checkin);
 
     // Conceder pontos pelo check-in
     const pointsAwarded = 50; // Pontos por check-in em manifestação
@@ -667,7 +810,10 @@ router.post('/:id/checkin', authenticateUser, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao fazer check-in:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    res.status(500).json({ 
+      error: 'Erro interno do servidor', 
+      details: error.message 
+    });
   }
 });
 

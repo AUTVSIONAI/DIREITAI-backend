@@ -137,31 +137,51 @@ router.post('/geographic', authenticateUser, async (req, res) => {
 // Check-in to an event
 router.post('/', authenticateUser, async (req, res) => {
   try {
-    const { event_id, secret_code, latitude, longitude } = req.body;
+    let { event_id, secret_code, latitude, longitude } = req.body;
     const userId = req.user.id;
 
     // Validate required fields
-    if (!event_id || !secret_code) {
-      return res.status(400).json({ error: 'Event ID and secret code are required' });
+    if (!secret_code) {
+      return res.status(400).json({ error: 'Secret code is required' });
     }
 
-    // Get event details
-    const { data: event, error: eventError } = await adminSupabase
-      .from('events')
-      .select('*')
-      .eq('id', event_id)
-      .single();
+    let event;
+    let eventError;
+
+    if (event_id) {
+      // Get event details by ID
+      const result = await adminSupabase
+        .from('events')
+        .select('*')
+        .eq('id', event_id)
+        .single();
+      event = result.data;
+      eventError = result.error;
+    } else {
+      // Find event by secret code
+      const result = await adminSupabase
+        .from('events')
+        .select('*')
+        .eq('secret_code', secret_code)
+        .eq('status', 'active')
+        .single();
+      event = result.data;
+      eventError = result.error;
+    }
 
     if (eventError || !event) {
-      return res.status(404).json({ error: 'Event not found' });
+      return res.status(404).json({ error: 'Event not found or invalid code' });
     }
+
+    // Update event_id if it was found by code
+    event_id = event.id;
 
     // Check if event is active
     if (event.status !== 'active') {
       return res.status(400).json({ error: 'Event is not active' });
     }
 
-    // Verify secret code
+    // Verify secret code (redundant if found by code, but safe)
     if (event.secret_code !== secret_code) {
       return res.status(400).json({ error: 'Invalid secret code' });
     }

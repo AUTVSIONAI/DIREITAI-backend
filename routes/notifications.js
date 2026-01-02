@@ -274,6 +274,231 @@ router.get('/templates/metadata', optionalAuthenticateUser, async (req, res) => 
 // Middleware para autenticação em todas as outras rotas
 router.use(authenticateUser);
 
+// === ESTATÍSTICAS ===
+router.get('/stats', async (req, res) => {
+  try {
+    const { period, startDate, endDate } = req.query;
+    
+    // Definir data de início baseada no período
+    let dateFilter = new Date();
+    const validPeriod = period || 'month'; // Default to month if undefined
+
+    if (validPeriod === 'day') dateFilter.setDate(dateFilter.getDate() - 1);
+    else if (validPeriod === 'week') dateFilter.setDate(dateFilter.getDate() - 7);
+    else if (validPeriod === 'month') dateFilter.setMonth(dateFilter.getMonth() - 1);
+    else if (validPeriod === 'year') dateFilter.setFullYear(dateFilter.getFullYear() - 1);
+    
+    if (startDate) dateFilter = new Date(startDate);
+    
+    const isoDate = dateFilter.toISOString();
+    
+    // Executar queries em paralelo para melhor performance
+    const [totalResult, readResult, unreadResult, typeResult, clickedResult] = await Promise.all([
+      // Total no período
+      adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', isoDate),
+        
+      // Lidas
+      adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', isoDate)
+        .not('read_at', 'is', null),
+        
+      // Não lidas
+      adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', isoDate)
+        .is('read_at', null),
+        
+      // Por tipo (precisa buscar os dados para agregar)
+      adminSupabase
+        .from('notifications')
+        .select('type')
+        .gte('created_at', isoDate),
+
+      // Clicadas (para taxa de clique)
+      adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', isoDate)
+        .not('clicked_at', 'is', null)
+    ]);
+
+    // Agregar por tipo
+    const byType = {};
+    if (typeResult.data) {
+      typeResult.data.forEach(n => {
+        byType[n.type] = (byType[n.type] || 0) + 1;
+      });
+    }
+
+    const total = totalResult.count || 0;
+    const read = readResult.count || 0;
+    const unread = unreadResult.count || 0;
+    const clicked = clickedResult.count || 0;
+
+    res.json({
+      total,
+      totalSent: total, // Alias for frontend compatibility
+      read,
+      totalRead: read, // Alias for frontend compatibility
+      unread,
+      readRate: total > 0 ? ((read / total) * 100).toFixed(1) : 0,
+      clickRate: total > 0 ? ((clicked / total) * 100).toFixed(1) : 0,
+      byType: byType,
+      period: validPeriod,
+      startDate: isoDate
+    });
+    
+  } catch (error) {
+    console.error('Erro ao buscar estatísticas:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// === NOTIFICAÇÕES DO USUÁRIO ===
+
+// Obter notificações do usuário atual
+router.get('/', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { read, type, category, page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    let query = adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact' })
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + parseInt(limit) - 1);
+
+    if (read !== undefined) {
+      query = query.eq('is_read', read === 'true');
+    }
+
+    if (type) query = query.eq('type', type);
+    if (category) query = query.eq('category', category);
+
+    const { data: notifications, count, error } = await query;
+
+    if (error) throw error;
+
+    // Contar não lidas
+    const { count: unreadCount } = await adminSupabase
+      .from('notifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    res.json({
+      notifications: notifications || [],
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / parseInt(limit)),
+      unreadCount: unreadCount || 0
+    });
+  } catch (error) {
+    console.error('Erro ao buscar notificações do usuário:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Marcar notificação como lida
+router.patch('/:id/read', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao marcar notificação como lida:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Registrar clique na notificação
+router.patch('/:id/click', authenticateUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    // 1. Atualizar notificação
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ is_clicked: true, clicked_at: new Date().toISOString(), is_read: true, read_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // 2. Registrar no histórico de cliques (fire and forget)
+    adminSupabase
+      .from('notification_clicks')
+      .insert({ notification_id: id, user_id: userId })
+      .catch(err => console.warn('Erro ao registrar click history:', err));
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao registrar clique na notificação:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Marcar notificação como não lida
+router.patch('/:id/unread', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const { data, error } = await adminSupabase
+      .from('notifications')
+      .update({ is_read: false, read_at: null })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao marcar notificação como não lida:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Marcar todas como lidas
+router.patch('/read-all', async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const { error } = await adminSupabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    if (error) throw error;
+    res.json({ message: 'Todas as notificações marcadas como lidas' });
+  } catch (error) {
+    console.error('Erro ao marcar todas como lidas:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // === CANAIS E FILA (ADMIN) ===
 
 // Obter canais de notificação disponíveis
@@ -568,6 +793,107 @@ router.post('/templates/:id/preview', async (req, res) => {
   }
 });
 
+// === ESTATÍSTICAS ===
+
+// Obter estatísticas de notificações (admin)
+router.get('/stats', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { period = 'month', startDate, endDate } = req.query;
+    
+    // Definir intervalo de datas
+    let start = new Date();
+    const end = endDate ? new Date(endDate) : new Date();
+    
+    if (startDate) {
+      start = new Date(startDate);
+    } else {
+      switch (period) {
+        case 'day':
+          start.setDate(start.getDate() - 1);
+          break;
+        case 'week':
+          start.setDate(start.getDate() - 7);
+          break;
+        case 'month':
+          start.setMonth(start.getMonth() - 1);
+          break;
+        case 'year':
+          start.setFullYear(start.getFullYear() - 1);
+          break;
+        default:
+          start.setMonth(start.getMonth() - 1);
+      }
+    }
+
+    // Buscar totais
+    console.log(`📊 Stats: Buscando estatísticas de ${start.toISOString()} até ${end.toISOString()}`);
+
+    const { count: totalSent } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
+    const { count: totalRead } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .not('read_at', 'is', null) // Usar read_at em vez de is_read
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+      
+    const { count: totalClicked } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .not('clicked_at', 'is', null)
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
+    const { count: totalDismissed } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .not('dismissed_at', 'is', null)
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
+    // Buscar contagem por tipo
+    const types = ['info', 'success', 'warning', 'error'];
+    const byType = {};
+    
+    for (const type of types) {
+      const { count } = await adminSupabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('type', type)
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+      
+      byType[type] = count || 0;
+    }
+
+    // Calcular taxas
+    const readRate = totalSent ? Math.round((totalRead / totalSent) * 100) : 0;
+    const clickRate = totalRead ? Math.round((totalClicked / totalRead) * 100) : 0;
+
+    // Dados para gráfico (simulado/agrupado)
+    // Para simplificar, vamos retornar apenas os totais por enquanto
+    
+    res.json({
+      totalSent: totalSent || 0,
+      totalRead: totalRead || 0,
+      totalClicked: totalClicked || 0,
+      totalDismissed: totalDismissed || 0,
+      readRate,
+      clickRate,
+      byType,
+      // Estrutura compatível com o frontend se necessário
+      chartData: [] 
+    });
+  } catch (error) {
+    console.error('Erro ao obter estatísticas:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // === ROTAS GERAIS ===
 
 // Obter notificações do usuário
@@ -743,7 +1069,7 @@ router.post('/announcements/admin', requireAdmin, async (req, res) => {
         target_audience: target_audience || 'all',
         start_date: start_date || new Date().toISOString(),
         end_date: end_date || null,
-        active: active !== undefined ? active : true,
+        is_active: active !== undefined ? active : true,
         created_by: createdBy,
         is_archived: false,
         display_rules: display_rules || {},
@@ -816,6 +1142,12 @@ router.put('/announcements/admin/:id', requireAdmin, async (req, res) => {
         delete updates.created_at;
         delete updates.created_by;
 
+        // Map active to is_active if present
+        if (updates.active !== undefined) {
+          updates.is_active = updates.active;
+          delete updates.active;
+        }
+
         const { data, error } = await adminSupabase
             .from('announcements')
             .update(updates)
@@ -837,11 +1169,11 @@ router.get('/announcements', async (req, res) => {
     const userId = req.user ? req.user.id : null;
     console.log('🔔 INÍCIO - Buscando anúncios para usuário:', userId);
 
-    // Buscar anúncios ativos (usando 'active' em vez de 'is_active')
+    // Buscar anúncios ativos (usando 'is_active')
     const { data: announcements, error: announcementsError } = await adminSupabase
       .from('announcements')
       .select('*')
-      .eq('active', true);
+      .eq('is_active', true);
 
     console.log('📋 Anúncios encontrados:', announcements);
     console.log('❌ Erro na busca de anúncios:', announcementsError);
@@ -2524,6 +2856,100 @@ router.patch('/:id/unarchive', async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('Erro ao desarquivar notificação:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Obter estatísticas de notificações (admin)
+router.get('/stats', requireAdmin, async (req, res) => {
+  try {
+    const { period = 'month', startDate, endDate } = req.query;
+    
+    // Definir intervalo de datas
+    let start = new Date();
+    const end = endDate ? new Date(endDate) : new Date();
+    
+    if (startDate) {
+      start = new Date(startDate);
+    } else {
+      switch (period) {
+        case 'day':
+          start.setDate(start.getDate() - 1);
+          break;
+        case 'week':
+          start.setDate(start.getDate() - 7);
+          break;
+        case 'month':
+          start.setMonth(start.getMonth() - 1);
+          break;
+        case 'year':
+          start.setFullYear(start.getFullYear() - 1);
+          break;
+        default:
+          start.setMonth(start.getMonth() - 1);
+      }
+    }
+
+    // Buscar totais
+    const { count: totalSent } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
+    const { count: totalRead } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_read', true)
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+      
+    const { count: totalClicked } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_clicked', true)
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
+    const { count: totalDismissed } = await adminSupabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_dismissed', true)
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
+    // Calcular taxas
+    const readRate = totalSent ? Math.round((totalRead / totalSent) * 100) : 0;
+    const clickRate = totalRead ? Math.round((totalClicked / totalRead) * 100) : 0;
+
+    // Agrupar por data (exemplo simplificado)
+    // Para um gráfico real, precisaríamos de uma query mais complexa ou processamento
+    // Aqui vamos retornar dados simulados baseados no total para o gráfico
+    const chartData = [];
+    const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+    const step = Math.max(1, Math.floor(daysDiff / 10)); // Limitar a ~10 pontos
+
+    for (let i = 0; i <= daysDiff; i += step) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      chartData.push({
+        date: d.toISOString().split('T')[0],
+        sent: Math.floor(totalSent / (daysDiff / step + 1)), // Distribuir uniformemente (mock)
+        read: Math.floor(totalRead / (daysDiff / step + 1))
+      });
+    }
+
+    res.json({
+      totalSent: totalSent || 0,
+      totalRead: totalRead || 0,
+      totalClicked: totalClicked || 0,
+      totalDismissed: totalDismissed || 0,
+      readRate,
+      clickRate,
+      chartData
+    });
+  } catch (error) {
+    console.error('Erro ao obter estatísticas:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

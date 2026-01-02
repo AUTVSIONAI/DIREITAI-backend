@@ -33,8 +33,12 @@ const minimaxService = {
 
       return response.data.file.file_id;
     } catch (error) {
-      console.error('Erro no upload para MiniMax:', error.response?.data || error.message);
-      throw error;
+      const detailedError = error.response?.data 
+        ? JSON.stringify(error.response.data) 
+        : error.message;
+      const status = error.response?.status || 'Unknown';
+      console.error(`[MiniMax] Erro no upload (${status}):`, detailedError);
+      throw new Error(`Falha no upload MiniMax (${status}): ${detailedError}`);
     }
   },
 
@@ -65,8 +69,12 @@ const minimaxService = {
 
       return response.data;
     } catch (error) {
-      console.error('Erro na clonagem MiniMax:', error.response?.data || error.message);
-      throw error;
+      const detailedError = error.response?.data 
+        ? JSON.stringify(error.response.data) 
+        : error.message;
+      const status = error.response?.status || 'Unknown';
+      console.error(`[MiniMax] Erro na clonagem (${status}):`, detailedError);
+      throw new Error(`Falha na clonagem MiniMax (${status}): ${detailedError}`);
     }
   },
 

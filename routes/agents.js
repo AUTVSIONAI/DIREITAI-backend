@@ -34,7 +34,8 @@ router.get('/', async (req, res) => {
           position,
           state,
           party,
-          photo_url
+          photo_url,
+          voice_config
         )
       `)
       .order('created_at', { ascending: false });

@@ -119,44 +119,71 @@ router.put('/profile', authenticateUser, async (req, res) => {
 });
 
 // Get user statistics
+// Route removed as it was a duplicate of the more comprehensive handler below
+// router.get('/usage-stats', authenticateUser, async (req, res) => { ... });
+
+
+// Get user statistics (legacy route for backward compatibility + new route)
 router.get('/stats', authenticateUser, async (req, res) => {
   try {
     const userId = req.user.id;
+    const authId = req.user.auth_id;
 
-    // Get check-ins count
-    const { count: checkinsCount } = await supabase
-      .from('checkins')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+    console.log('📊 Stats - Calculando estatísticas para usuário:', userId, 'Auth ID:', authId);
 
-    // Get points
-    const { data: pointsData } = await supabase
-      .from('points')
-      .select('amount')
-      .eq('user_id', userId);
+    // 1. Calcular Check-ins (Robust: Public ID + Auth ID)
+    let orFilter = `user_id.eq.${userId}`;
+    if (authId) {
+      orFilter += `,user_id.eq.${authId}`;
+    }
+    
+    const [checkinsResult, geoCheckinsResult] = await Promise.all([
+      adminSupabase.from('checkins').select('*', { count: 'exact', head: true }).or(orFilter),
+      adminSupabase.from('geographic_checkins').select('*', { count: 'exact', head: true }).or(orFilter)
+    ]);
+    
+    const totalCheckins = (checkinsResult.count || 0) + (geoCheckinsResult.count || 0);
 
-    const totalPoints = pointsData?.reduce((sum, point) => sum + point.amount, 0) || 0;
+    // 2. Buscar Pontos e Ranking
+    // Primeiro buscamos os pontos cacheados no usuário para consistência com o ranking
+    const { data: userRecord } = await adminSupabase
+      .from('users')
+      .select('points, city')
+      .eq('id', userId)
+      .single();
 
-    // Get badges count
-    const { count: badgesCount } = await supabase
+    const userPoints = userRecord?.points || 0;
+
+    // Calcular Posição no Ranking (Global)
+    const { count: usersAbove } = await adminSupabase
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .gt('points', userPoints);
+      
+    const rankingPosition = (usersAbove || 0) + 1;
+
+    // 3. Buscar Badges
+    const { count: badgesCount } = await adminSupabase
       .from('badges')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .or(orFilter);
 
-    // Get AI conversations count
-    const { count: aiConversationsCount } = await supabase
+    // 4. Buscar Conversas IA
+    const { count: aiConversationsCount } = await adminSupabase
       .from('ai_conversations')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .or(orFilter);
 
-    const aiConversations = aiConversationsCount || 0;
-
-    res.json({
-      checkins: checkinsCount || 0,
-      points: totalPoints,
+    const stats = {
+      checkins: totalCheckins,
+      points: userPoints, // Usar pontos da tabela users para consistência
+      ranking_position: rankingPosition, // Adicionado campo de ranking
       badges: badgesCount || 0,
-      ai_conversations: aiConversations,
-    });
+      ai_conversations: aiConversationsCount || 0,
+    };
+
+    console.log('✅ Stats calculados:', stats);
+    res.json(stats);
   } catch (error) {
     console.error('Get stats error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -171,70 +198,64 @@ router.get('/ranking', authenticateUser, async (req, res) => {
 
     console.log('🏆 Ranking - Buscando ranking para usuário:', userId);
 
-    // Get user's city for city-based ranking
+    // Get user's city and points
     const { data: userData } = await supabase
       .from('users')
-      .select('city, state')
+      .select('city, state, points')
       .eq('id', userId)
       .single();
+    
+    if (!userData) {
+         return res.status(404).json({ error: 'User not found' });
+    }
 
-    let userQuery = supabase
+    // Calculate ranking position by counting users with more points
+    let query = adminSupabase
       .from('users')
-      .select('id, username, full_name, city, state, avatar_url');
+      .select('id', { count: 'exact', head: true })
+      .gt('points', userData.points || 0);
 
     // Apply scope filter
-    if (scope === 'city' && userData?.city) {
-      userQuery = userQuery.eq('city', userData.city);
-    } else if (scope === 'state' && userData?.state) {
-      userQuery = userQuery.eq('state', userData.state);
+    if (scope === 'city' && userData.city) {
+      query = query.eq('city', userData.city);
+    } else if (scope === 'state' && userData.state) {
+      query = query.eq('state', userData.state);
     }
 
-    const { data: users, error: usersError } = await userQuery.limit(100);
+    const { count: usersAbove, error: rankError } = await query;
+    
+    if (rankError) throw rankError;
+    
+    const rankingPosition = (usersAbove || 0) + 1;
 
-    if (usersError) {
-      console.error('❌ Ranking - Erro ao buscar usuários:', usersError);
-      return res.status(400).json({ error: usersError.message });
-    }
+    // Get total users for context
+    let totalQuery = adminSupabase.from('users').select('id', { count: 'exact', head: true });
+    if (scope === 'city' && userData.city) totalQuery = totalQuery.eq('city', userData.city);
+    else if (scope === 'state' && userData.state) totalQuery = totalQuery.eq('state', userData.state);
+    const { count: totalUsers } = await totalQuery;
 
-    // Calculate points for each user from points table
-    const userIds = users.map(user => user.id);
-    const { data: pointsData, error: pointsError } = await supabase
-      .from('points')
-      .select('user_id, amount')
-      .in('user_id', userIds);
-
-    if (pointsError) {
-      console.error('❌ Ranking - Erro ao buscar pontos:', pointsError);
-    }
-
-    // Calculate total points for each user
-    const userPoints = {};
-    if (pointsData) {
-      pointsData.forEach(point => {
-        if (!userPoints[point.user_id]) {
-          userPoints[point.user_id] = 0;
-        }
-        userPoints[point.user_id] += point.amount;
-      });
-    }
-
-    // Add points to users and sort by points
-    const rankings = users.map(user => ({
-      ...user,
-      points: userPoints[user.id] || 0
-    })).sort((a, b) => b.points - a.points);
-
-    // Find user's position
-    const userPosition = rankings.findIndex(user => user.id === userId) + 1;
-
-    console.log('🏆 Ranking - Rankings calculados:', rankings.length, 'usuários');
-    console.log('🏆 Ranking - Posição do usuário:', userPosition);
+    // Fetch Top 3
+    let top3Query = adminSupabase
+      .from('users')
+      .select('id, full_name, points, city, state, avatar_url')
+      .order('points', { ascending: false })
+      .limit(3);
+      
+    if (scope === 'city' && userData.city) top3Query = top3Query.eq('city', userData.city);
+    else if (scope === 'state' && userData.state) top3Query = top3Query.eq('state', userData.state);
+    
+    const { data: top3Users } = await top3Query;
+    
+    const top3 = (top3Users || []).map(u => ({
+      ...u,
+      name: u.full_name
+    }));
 
     res.json({
-      rankings,
-      user_position: userPosition || null,
-      scope,
-      period,
+      myPosition: rankingPosition,
+      user_position: rankingPosition, // Frontend expects this
+      totalUsers: totalUsers || 0,
+      top3: top3,
     });
   } catch (error) {
     console.error('Get ranking error:', error);
@@ -246,12 +267,18 @@ router.get('/ranking', authenticateUser, async (req, res) => {
 router.get('/achievements', authenticateUser, async (req, res) => {
   try {
     const userId = req.user.id;
+    const authId = req.user.auth_id;
     console.log('🏅 Achievements - Buscando conquistas para usuário:', userId);
+
+    let orFilter = `user_id.eq.${userId}`;
+    if (authId) {
+      orFilter += `,user_id.eq.${authId}`;
+    }
 
     const { data: badges, error } = await supabase
       .from('badges')
       .select('*')
-      .eq('user_id', userId)
+      .or(orFilter)
       .order('earned_at', { ascending: false });
 
     if (error) {
@@ -408,19 +435,53 @@ router.get('/usage-stats', authenticateUser, async (req, res) => {
     const userId = req.user.id;
     const userPlan = req.user.plan || 'gratuito';
     
+    // Fetch user profile to get auth_id and subscription info
+    const { data: userProfile } = await adminSupabase
+      .from('users')
+      .select('auth_id, subscription_current_period_end, created_at')
+      .eq('id', userId)
+      .single();
 
+    const authId = userProfile?.auth_id;
+    
+    // Calculate Check-ins (Robust: Public ID + Auth ID)
+    const orFilter = authId ? `user_id.eq.${userId},user_id.eq.${authId}` : `user_id.eq.${userId}`;
+    
+    // Assumindo que fake_news_checks usa user_id também. Se usar usuario_id, precisaria ajustar.
+    // Vamos tentar user_id primeiro, pois é o padrão do sistema.
+    const orFilterFakeNews = orFilter;
+    
+    const [checkinsResult, geoCheckinsResult] = await Promise.all([
+      adminSupabase.from('checkins').select('*', { count: 'exact', head: true }).or(orFilter),
+      adminSupabase.from('geographic_checkins').select('*', { count: 'exact', head: true }).or(orFilter)
+    ]);
+    
+    const totalCheckins = (checkinsResult.count || 0) + (geoCheckinsResult.count || 0);
 
     // Get total AI conversations count
     const { count: totalConversations } = await adminSupabase
       .from('ai_conversations')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .or(orFilter);
 
     // Get total fake news analyses count
-    const { count: totalFakeNewsAnalyses } = await adminSupabase
-      .from('fake_news_checks')
-      .select('*', { count: 'exact', head: true })
-      .eq('usuario_id', userId);
+    // Tenta user_id. Se falhar silenciosamente (retornar 0), ok. Se der erro, vamos capturar.
+    let totalFakeNewsAnalyses = 0;
+    try {
+        const { count } = await adminSupabase
+          .from('fake_news_checks')
+          .select('*', { count: 'exact', head: true })
+          .or(orFilterFakeNews);
+        totalFakeNewsAnalyses = count || 0;
+    } catch (e) {
+        console.warn('Erro ao buscar fake_news_checks com user_id, tentando usuario_id...');
+        const altFilter = authId ? `usuario_id.eq.${userId},usuario_id.eq.${authId}` : `usuario_id.eq.${userId}`;
+        const { count } = await adminSupabase
+          .from('fake_news_checks')
+          .select('*', { count: 'exact', head: true })
+          .or(altFilter);
+        totalFakeNewsAnalyses = count || 0;
+    }
 
     // Get today's usage for daily limits
     const today = new Date();
@@ -431,28 +492,39 @@ router.get('/usage-stats', authenticateUser, async (req, res) => {
     const { count: todayConversations } = await adminSupabase
       .from('ai_conversations')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
+      .or(orFilter)
       .gte('created_at', today.toISOString())
       .lt('created_at', tomorrow.toISOString());
 
-    const { count: todayFakeNewsAnalyses } = await adminSupabase
-      .from('fake_news_checks')
-      .select('*', { count: 'exact', head: true })
-      .eq('usuario_id', userId)
-      .gte('created_at', today.toISOString())
-      .lt('created_at', tomorrow.toISOString());
+    let todayFakeNewsAnalyses = 0;
+    try {
+        const { count } = await adminSupabase
+          .from('fake_news_checks')
+          .select('*', { count: 'exact', head: true })
+          .or(orFilterFakeNews)
+          .gte('created_at', today.toISOString())
+          .lt('created_at', tomorrow.toISOString());
+        todayFakeNewsAnalyses = count || 0;
+    } catch (e) {
+         const altFilter = authId ? `usuario_id.eq.${userId},usuario_id.eq.${authId}` : `usuario_id.eq.${userId}`;
+         const { count } = await adminSupabase
+          .from('fake_news_checks')
+          .select('*', { count: 'exact', head: true })
+          .or(altFilter)
+          .gte('created_at', today.toISOString())
+          .lt('created_at', tomorrow.toISOString());
+         todayFakeNewsAnalyses = count || 0;
+    }
 
-    // Get political agents usage - check if agents table exists, otherwise count unique conversation_ids
+    // Get political agents usage
     let politicalAgentsUsed = 0;
     try {
-      // Try to get unique conversation_ids from ai_conversations as a proxy for agent usage
       const { data: agentConversations, error: agentError } = await adminSupabase
         .from('ai_conversations')
         .select('conversation_id')
-        .eq('user_id', userId);
+        .or(orFilter);
       
       if (!agentError && agentConversations) {
-        // Count unique conversation_ids as political agent usage
         const uniqueConversations = new Set(agentConversations.map(c => c.conversation_id));
         politicalAgentsUsed = uniqueConversations.size;
       }
@@ -461,23 +533,15 @@ router.get('/usage-stats', authenticateUser, async (req, res) => {
       politicalAgentsUsed = 0;
     }
 
-    // Calculate days remaining until plan renewal
-    const { data: userProfile } = await supabase
-      .from('users')
-      .select('subscription_current_period_end, created_at')
-      .eq('id', userId)
-      .single();
-
+    // Calculate days remaining
     let daysRemaining = 0;
     const currentDate = new Date();
     
     if (userProfile?.subscription_current_period_end) {
-      // Use subscription end date if available
       const expirationDate = new Date(userProfile.subscription_current_period_end);
       const timeDiff = expirationDate.getTime() - currentDate.getTime();
       daysRemaining = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
     } else {
-      // For users without subscription end date, calculate based on creation date + 30 days
       const creationDate = new Date(userProfile?.created_at || new Date());
       const renewalDate = new Date(creationDate);
       renewalDate.setDate(renewalDate.getDate() + 30);
@@ -485,7 +549,7 @@ router.get('/usage-stats', authenticateUser, async (req, res) => {
       daysRemaining = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
     }
 
-    // Define limits based on plan (sincronizado com subscription_plans)
+    // Define limits
     const limits = {
       gratuito: {
         ai_conversations: 10,
@@ -493,30 +557,49 @@ router.get('/usage-stats', authenticateUser, async (req, res) => {
         political_agents: 3
       },
       patriota: {
-        ai_conversations: 20,
+        ai_conversations: -1, 
         fake_news_analyses: 2,
         political_agents: 1
+      },
+      cidadao: {
+        ai_conversations: -1,
+        fake_news_analyses: 5,
+        political_agents: 3
       },
       engajado: {
         ai_conversations: 100,
         fake_news_analyses: 10,
         political_agents: 20
       },
-      lider: {
-        ai_conversations: -1, // unlimited
-        fake_news_analyses: -1, // unlimited
-        political_agents: -1 // unlimited
-      },
-      // Mapeamento para planos antigos/alternativos
       premium: {
-        ai_conversations: 100,
-        fake_news_analyses: 25,
-        political_agents: 20
+        ai_conversations: -1,
+        fake_news_analyses: 15,
+        political_agents: -1
+      },
+      pro: {
+        ai_conversations: -1,
+        fake_news_analyses: 20,
+        political_agents: -1
+      },
+      elite: {
+        ai_conversations: -1,
+        fake_news_analyses: 30,
+        political_agents: -1
+      },
+      lider: {
+        ai_conversations: -1,
+        fake_news_analyses: -1,
+        political_agents: -1
+      },
+      vip: {
+        ai_conversations: -1,
+        fake_news_analyses: -1,
+        political_agents: -1
       },
       supremo: {
-        ai_conversations: -1, // unlimited
-        fake_news_analyses: -1, // unlimited
-        political_agents: -1 // unlimited
+        ai_conversations: -1,
+        fake_news_analyses: -1,
+        political_agents: -1
       }
     };
 
@@ -524,24 +607,25 @@ router.get('/usage-stats', authenticateUser, async (req, res) => {
 
     res.json({
       plan: userPlan,
+      checkins: totalCheckins,
       daysRemaining,
       usage: {
         ai_conversations: {
-          used: todayConversations || 0, // Usar uso diário para ser consistente com limites diários
+          used: todayConversations || 0,
           used_today: todayConversations || 0,
-          used_total: totalConversations || 0, // Adicionar total histórico separadamente
+          used_total: totalConversations || 0,
           limit: planLimits.ai_conversations,
           remaining: planLimits.ai_conversations === -1 ? -1 : Math.max(0, planLimits.ai_conversations - (todayConversations || 0))
         },
         fake_news_analyses: {
-          used: todayFakeNewsAnalyses || 0, // Usar uso diário para ser consistente com limites diários
+          used: todayFakeNewsAnalyses || 0,
           used_today: todayFakeNewsAnalyses || 0,
-          used_total: totalFakeNewsAnalyses || 0, // Adicionar total histórico separadamente
+          used_total: totalFakeNewsAnalyses || 0,
           limit: planLimits.fake_news_analyses,
           remaining: planLimits.fake_news_analyses === -1 ? -1 : Math.max(0, planLimits.fake_news_analyses - (todayFakeNewsAnalyses || 0))
         },
         political_agents: {
-          used: politicalAgentsUsed || 0, // Este já é um total, mas vamos manter consistência
+          used: politicalAgentsUsed || 0,
           used_total: politicalAgentsUsed || 0,
           limit: planLimits.political_agents,
           remaining: planLimits.political_agents === -1 ? -1 : Math.max(0, planLimits.political_agents - (politicalAgentsUsed || 0))

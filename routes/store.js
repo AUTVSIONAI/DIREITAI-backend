@@ -44,6 +44,75 @@ router.get('/products', async (req, res) => {
   }
 });
 
+// Rota para compartilhamento social (WhatsApp/Facebook)
+router.get('/social/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { ref } = req.query;
+    const { data: product, error } = await supabase
+      .from('products')
+      .select('name, description, image, price')
+      .eq('id', id)
+      .single();
+
+    if (error || !product) {
+      return res.status(404).send('Produto não encontrado');
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'https://direitai.com';
+    // Redireciona para a loja com o produto selecionado na query
+    let redirectUrl = `${frontendUrl}/store?product=${id}`;
+    if (ref) redirectUrl += `&ref=${ref}`;
+    
+    // Resolver URL da imagem
+    let imageUrl = product.image || `${frontendUrl}/logo.png`;
+    if (imageUrl && !imageUrl.startsWith('http')) {
+       const backendUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+       imageUrl = `${backendUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+    }
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8">
+        <title>${product.name} | Loja DireitAI</title>
+        <meta name="description" content="${product.description || 'Confira este produto na Loja Patriota'}">
+        
+        <!-- Open Graph / Facebook / WhatsApp -->
+        <meta property="og:type" content="product">
+        <meta property="og:url" content="${redirectUrl}">
+        <meta property="og:title" content="${product.name}">
+        <meta property="og:description" content="${product.description || 'Confira este produto na Loja Patriota'}">
+        <meta property="og:image" content="${imageUrl}">
+        <meta property="og:price:amount" content="${product.price}">
+        <meta property="og:price:currency" content="BRL">
+        <meta property="og:site_name" content="DireitAI">
+        
+        <!-- Twitter -->
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="${product.name}">
+        <meta name="twitter:description" content="${product.description || 'Confira este produto na Loja Patriota'}">
+        <meta name="twitter:image" content="${imageUrl}">
+        
+        <!-- Redirecionamento -->
+        <script>
+          window.location.href = "${redirectUrl}";
+        </script>
+      </head>
+      <body>
+        <p>Redirecionando para o produto: <a href="${redirectUrl}">${product.name}</a>...</p>
+      </body>
+      </html>
+    `;
+    
+    res.send(html);
+  } catch (error) {
+    console.error('Erro ao gerar preview social:', error);
+    res.status(500).send('Erro interno do servidor');
+  }
+});
+
 // Get product by ID
 router.get('/products/:id', async (req, res) => {
   try {

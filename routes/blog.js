@@ -52,6 +52,93 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/blog/social/:identifier - Proxy para compartilhamento social (WhatsApp/Facebook)
+router.get('/social/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    let post = null;
+
+    // Se o identificador é um UUID, busca por ID
+    if (isValidUUID(identifier)) {
+      const { data, error } = await supabase
+        .from('politician_posts')
+        .select('*')
+        .eq('id', identifier)
+        .single();
+        
+      if (!error && data) post = data;
+    } else {
+      // Se não é UUID, busca por título que gere o mesmo slug
+      const { data: allPosts, error: searchError } = await supabase
+        .from('politician_posts')
+        .select('*')
+        .eq('is_published', true);
+
+      if (!searchError && allPosts) {
+        post = allPosts.find(p => generateSlug(p.title) === identifier);
+      }
+    }
+
+    if (!post) {
+      return res.status(404).send('Post não encontrado');
+    }
+
+    // Configurar URL de redirecionamento (Frontend)
+    // Tenta usar variável de ambiente ou fallback para direitai.com
+    const frontendUrl = process.env.FRONTEND_URL || 'https://direitai.com';
+    const redirectUrl = `${frontendUrl}/blog/${identifier}`;
+    
+    // Resolver URL da imagem (se for relativa, adicionar domínio do backend)
+    let imageUrl = post.cover_image_url || post.featured_image_url || 'https://direitai.com/logo.png';
+    if (imageUrl && !imageUrl.startsWith('http')) {
+       // Assumindo que o backend está servindo arquivos estáticos
+       const backendUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+       imageUrl = `${backendUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+    }
+
+    // Gerar HTML com Meta Tags
+    const html = `
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8">
+        <title>${post.title} | DireitAI</title>
+        <meta name="description" content="${post.excerpt || post.title}">
+        
+        <!-- Open Graph / Facebook / WhatsApp -->
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="${redirectUrl}">
+        <meta property="og:title" content="${post.title}">
+        <meta property="og:description" content="${post.excerpt || post.title}">
+        <meta property="og:image" content="${imageUrl}">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta property="og:site_name" content="DireitAI">
+        
+        <!-- Twitter -->
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="${post.title}">
+        <meta name="twitter:description" content="${post.excerpt || post.title}">
+        <meta name="twitter:image" content="${imageUrl}">
+        
+        <!-- Redirecionamento -->
+        <script>
+          window.location.href = "${redirectUrl}";
+        </script>
+      </head>
+      <body>
+        <p>Redirecionando para a notícia: <a href="${redirectUrl}">${post.title}</a>...</p>
+      </body>
+      </html>
+    `;
+    
+    res.send(html);
+  } catch (error) {
+    console.error('Erro ao gerar preview social:', error);
+    res.status(500).send('Erro interno do servidor');
+  }
+});
+
 // GET /api/blog/posts - Listar posts (compatibilidade)
 router.get('/posts', async (req, res) => {
   try {
@@ -740,7 +827,7 @@ router.get('/:postId/comments', async (req, res) => {
       for (const comment of comments) {
         const { data: user } = await supabase
           .from('users')
-          .select('id, name, email')
+          .select('id, name, email, avatar_url')
           .eq('id', comment.user_id)
           .single();
         
@@ -822,7 +909,7 @@ router.post('/:postId/comments', authenticateUser, async (req, res) => {
     // Buscar dados do usuário
     const { data: user } = await supabase
       .from('users')
-      .select('id, username, email, full_name')
+      .select('id, username, email, full_name, avatar_url')
       .eq('id', req.user.id)
       .single();
 

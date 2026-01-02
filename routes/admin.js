@@ -69,6 +69,119 @@ router.get('/notifications', authenticateUser, authenticateAdmin, async (req, re
   }
 });
 
+// Broadcast notification (Admin)
+router.post('/notifications/broadcast', authenticateUser, authenticateAdmin, async (req, res) => {
+  console.log('📢 Recebendo requisição de broadcast:', JSON.stringify(req.body, null, 2));
+  try {
+    const { title, message, type = 'info', category = 'system', targetUsers, targetRoles, channels, priority = 'medium' } = req.body;
+
+    if (!title || !message) {
+      return res.status(400).json({ error: 'Title and message are required' });
+    }
+
+    let userIds = [];
+
+    // Se usuários específicos foram selecionados
+    if (targetUsers && targetUsers.length > 0) {
+      console.log(`🎯 Alvo: ${targetUsers.length} usuários específicos`);
+      userIds = targetUsers;
+    } else if (targetRoles && targetRoles.length > 0) {
+      console.log(`🎯 Alvo: Roles ${targetRoles.join(', ')}`);
+      // Se roles foram selecionados
+              let query = adminSupabase.from('users').select('id');
+              
+              const rolesConditions = [];
+              
+              // Mapear roles para condições do banco
+              for (const role of targetRoles) {
+                if (role === 'admin') {
+                  rolesConditions.push('role.eq.admin');
+                  rolesConditions.push('is_admin.eq.true');
+                } else {
+                  // Assumindo que o valor do role no frontend corresponde ao valor no banco
+                  // Ex: 'lawyer', 'client'
+                  rolesConditions.push(`role.eq.${role}`);
+                }
+              }
+              
+              if (rolesConditions.length > 0) {
+                query = query.or(rolesConditions.join(','));
+              }
+              
+              const { data: users, error } = await query;
+              if (error) {
+                console.error('Error fetching users by role:', error);
+                throw error;
+              }
+              userIds = users.map(u => u.id);
+              console.log(`✅ Encontrados ${userIds.length} usuários para as roles selecionadas`);
+            } else {
+      console.log('🎯 Alvo: Todos os usuários');
+      // Broadcast para todos (se targetUsers e targetRoles vazios)
+      // CUIDADO: Em produção, isso deve ser feito via job queue
+      let query = adminSupabase.from('users').select('id');
+      const { data: users, error } = await query;
+      if (error) throw error;
+      userIds = users.map(u => u.id);
+      console.log(`✅ Encontrados ${userIds.length} usuários no total`);
+    }
+
+    if (userIds.length === 0) {
+      console.log('⚠️ Nenhum usuário alvo encontrado');
+      return res.status(400).json({ error: 'No target users found' });
+    }
+
+    // Preparar notificações para inserção em massa
+    const notifications = userIds.map(userId => ({
+      user_id: userId,
+      title,
+      message,
+      type,
+      category,
+      priority,
+      is_read: false,
+      created_at: new Date().toISOString(),
+      // Se houver campos extras como data ou link, adicionar aqui se o schema permitir
+      // data: { channels } 
+    }));
+
+    console.log(`📨 Preparando para inserir ${notifications.length} notificações...`);
+
+    // Inserir em batches para evitar limites
+    const BATCH_SIZE = 100;
+    let successCount = 0;
+    
+    for (let i = 0; i < notifications.length; i += BATCH_SIZE) {
+      const batch = notifications.slice(i, i + BATCH_SIZE);
+      const { error } = await adminSupabase
+        .from('notifications')
+        .insert(batch);
+      
+      if (error) {
+        console.error('❌ Erro ao inserir lote de notificações:', error);
+        // Continuar tentando outros batches ou falhar?
+        // Por enquanto, logamos e continuamos
+      } else {
+        successCount += batch.length;
+        console.log(`✅ Lote ${i/BATCH_SIZE + 1} inserido com sucesso (${batch.length} itens)`);
+      }
+    }
+
+    if (successCount === 0 && notifications.length > 0) {
+        throw new Error('Falha ao inserir notificações no banco de dados');
+    }
+
+    res.json({ 
+      message: 'Broadcast notification queued successfully', 
+      count: successCount,
+      notificationId: 'broadcast-' + Date.now() 
+    });
+  } catch (error) {
+    console.error('❌ Broadcast notification error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
 // Mark notification as read (Admin)
 router.patch('/notifications/:id/read', authenticateUser, authenticateAdmin, async (req, res) => {
   try {
@@ -118,13 +231,18 @@ router.get('/overview', authenticateUser, authenticateAdmin, async (req, res) =>
       new Date(u.created_at) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     ).length || 0;
 
-    // Get check-in statistics
+    // Get check-in statistics (combining checkins and geographic_checkins)
     const { data: checkinStats } = await adminSupabase
       .from('checkins')
       .select('created_at')
       .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
 
-    const checkinsToday = checkinStats?.length || 0;
+    const { data: geoCheckinStats } = await adminSupabase
+      .from('geographic_checkins')
+      .select('created_at')
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+    const checkinsToday = (checkinStats?.length || 0) + (geoCheckinStats?.length || 0);
 
     // Get event statistics
     const { data: eventStats } = await adminSupabase
@@ -244,10 +362,12 @@ router.get('/users', authenticateUser, authenticateAdmin, async (req, res) => {
       .from('users')
       .select(`
         id,
+        auth_id,
         email,
         username,
         full_name,
         plan,
+        banned,
         is_admin,
         created_at,
         last_login,
@@ -263,7 +383,9 @@ router.get('/users', authenticateUser, authenticateAdmin, async (req, res) => {
     }
 
     if (search) {
-      query = query.or(`email.ilike.%${search}%,username.ilike.%${search}%,full_name.ilike.%${search}%`);
+      // Sanitize search to prevent PostgREST syntax errors with commas
+      const sanitizedSearch = search.replace(/,/g, ' ');
+      query = query.or(`email.ilike.%${sanitizedSearch}%,username.ilike.%${sanitizedSearch}%,full_name.ilike.%${sanitizedSearch}%`);
     }
 
     const { data: users, error } = await query;
@@ -272,30 +394,67 @@ router.get('/users', authenticateUser, authenticateAdmin, async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
-    // Get additional statistics for each user
-    const usersWithStats = await Promise.all(
-      users.map(async (user) => {
-        const { data: checkins } = await adminSupabase
-          .from('checkins')
-          .select('id')
-          .eq('user_id', user.id);
+    // Optimization: Fetch stats for all users in parallel (bulk) instead of N+1
+    const userIds = users.map(u => u.id);
+    const authIds = users.map(u => u.auth_id).filter(id => id); // valid auth_ids
+    const allIds = [...new Set([...userIds, ...authIds])]; // unique IDs to query
 
-        const { data: conversations } = await adminSupabase
+    if (allIds.length > 0) {
+      const [checkinsRes, geoCheckinsRes, conversationsRes] = await Promise.all([
+        adminSupabase
+          .from('checkins')
+          .select('user_id')
+          .in('user_id', allIds),
+        adminSupabase
+          .from('geographic_checkins')
+          .select('user_id')
+          .in('user_id', allIds),
+        adminSupabase
           .from('ai_conversations')
-          .select('id')
-          .eq('user_id', user.id);
+          .select('user_id')
+          .in('user_id', allIds)
+      ]);
+
+      const checkinsMap = {};
+      const geoCheckinsMap = {};
+      const conversationsMap = {};
+
+      // Helper to aggregate counts
+      const addToMap = (data, map) => {
+        data?.forEach(item => {
+          map[item.user_id] = (map[item.user_id] || 0) + 1;
+        });
+      };
+
+      addToMap(checkinsRes.data, checkinsMap);
+      addToMap(geoCheckinsRes.data, geoCheckinsMap);
+      addToMap(conversationsRes.data, conversationsMap);
+
+      const usersWithStats = users.map(user => {
+        // Count for both id and auth_id
+        const getCount = (map) => {
+          let count = map[user.id] || 0;
+          if (user.auth_id && user.auth_id !== user.id) {
+            count += map[user.auth_id] || 0;
+          }
+          return count;
+        };
 
         return {
           ...user,
+          status: user.banned ? 'banned' : 'active',
           stats: {
-            checkins: checkins?.length || 0,
-            conversations: conversations?.length || 0
+            checkins: getCount(checkinsMap) + getCount(geoCheckinsMap),
+            conversations: getCount(conversationsMap)
           }
         };
-      })
-    );
+      });
 
-    res.json({ users: usersWithStats });
+      res.json({ users: usersWithStats });
+    } else {
+       // Should not happen if users found, but safe fallback
+       res.json({ users: users.map(u => ({ ...u, status: u.banned ? 'banned' : 'active', stats: { checkins: 0, conversations: 0 } })) });
+    }
   } catch (error) {
     console.error('Get users error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -318,8 +477,16 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Get user's check-ins
-    const { data: checkins } = await adminSupabase
+    // Helper to add ID filter
+    const addIdFilter = (query) => {
+        if (user.auth_id) {
+            return query.or(`user_id.eq.${user.id},user_id.eq.${user.auth_id}`);
+        }
+        return query.eq('user_id', user.id);
+    };
+
+    // Get user's check-ins (from both tables)
+    const { data: eventCheckins } = await addIdFilter(adminSupabase
       .from('checkins')
       .select(`
         *,
@@ -327,33 +494,78 @@ router.get('/users/:userId', authenticateUser, authenticateAdmin, async (req, re
           title,
           location
         )
-      `)
-      .eq('user_id', user.id)
+      `))
       .order('created_at', { ascending: false })
       .limit(10);
 
+    const { data: geoCheckins } = await addIdFilter(adminSupabase
+      .from('geographic_checkins')
+      .select(`
+        *,
+        manifestations (
+          name,
+          city,
+          state
+        )
+      `))
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    // Normalize and combine checkins
+    const normalizedEventCheckins = (eventCheckins || []).map(c => ({
+      id: c.id,
+      type: 'event',
+      name: c.events?.title || 'Evento Desconhecido',
+      location: c.events?.location,
+      created_at: c.created_at
+    }));
+
+    const normalizedGeoCheckins = (geoCheckins || []).map(c => ({
+      id: c.id,
+      type: 'manifestation',
+      name: c.manifestations?.name || 'Manifestação Desconhecida',
+      location: c.manifestations ? `${c.manifestations.city}, ${c.manifestations.state}` : null,
+      created_at: c.created_at || c.checked_in_at // Use checked_in_at if created_at is missing
+    }));
+
+    const allCheckins = [...normalizedEventCheckins, ...normalizedGeoCheckins]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 10);
+
     // Get user's AI conversations
-    const { data: conversations } = await adminSupabase
+    const { data: conversations } = await addIdFilter(adminSupabase
       .from('ai_conversations')
-      .select('*')
-      .eq('user_id', user.id)
+      .select('*'))
       .order('created_at', { ascending: false })
       .limit(10);
 
     // Get user's orders
-    const { data: orders } = await adminSupabase
+    const { data: orders } = await addIdFilter(adminSupabase
       .from('orders')
-      .select('*')
-      .eq('user_id', user.id)
+      .select('*'))
       .order('created_at', { ascending: false })
       .limit(10);
+
+    // Get total check-in counts
+    const { count: eventCheckinsCount } = await addIdFilter(adminSupabase
+      .from('checkins')
+      .select('id', { count: 'exact', head: true }));
+
+    const { count: geoCheckinsCount } = await addIdFilter(adminSupabase
+      .from('geographic_checkins')
+      .select('id', { count: 'exact', head: true }));
 
     res.json({
       user,
       activity: {
-        checkins: checkins || [],
+        checkins: allCheckins,
         conversations: conversations || [],
         orders: orders || []
+      },
+      stats: {
+        totalCheckins: (eventCheckinsCount || 0) + (geoCheckinsCount || 0),
+        totalConversations: conversations?.length || 0, // Should probably be a separate count query
+        totalPoints: user.points || 0
       }
     });
   } catch (error) {
