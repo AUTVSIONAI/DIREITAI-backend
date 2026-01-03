@@ -177,6 +177,31 @@ router.post('/store-image', authenticateUser, authenticateAdmin, (req, res, next
   }
 });
 
+// Upload de imagem do blog
+router.post('/blog-image', authenticateUser, authenticateAdmin, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
+    }
+
+    console.log('🔍 Iniciando upload de imagem do blog para Supabase...');
+    // Upload para pasta 'blog'
+    const uploadResult = await uploadToSupabase(req.file, 'blog');
+    
+    res.json({
+      success: true,
+      message: 'Imagem do blog enviada com sucesso',
+      data: {
+        url: uploadResult.publicUrl,
+        fileName: uploadResult.fileName
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erro no upload da imagem do blog:', error);
+    res.status(500).json({ error: 'Erro interno do servidor', message: error.message });
+  }
+});
+
 // Alias para /image (para compatibilidade com chamadas antigas ou incorretas)
 router.post('/image', authenticateUser, authenticateAdmin, upload.single('image'), async (req, res) => {
   try {
