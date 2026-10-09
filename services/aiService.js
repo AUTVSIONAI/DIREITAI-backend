@@ -119,8 +119,13 @@ const OPENROUTER_MODELS = [
   'nvidia/nemotron-3.5-lightning:free'
 ];
 
+const CHAT_MAX_TOKENS = 4000;
+const FAKE_NEWS_MAX_TOKENS = 4000;
+const CREATIVE_MAX_TOKENS = 8000;
+const LLM_TIMEOUT_MS = 90000;
+
 // Função para chamar OpenRouter com modelo específico
-async function callOpenRouterModel(message, systemPrompt, model) {
+async function callOpenRouterModel(message, systemPrompt, model, maxTokens = CHAT_MAX_TOKENS) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   
   if (!openRouterKey) {
@@ -128,7 +133,7 @@ async function callOpenRouterModel(message, systemPrompt, model) {
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 segundos timeout
+  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -151,7 +156,7 @@ async function callOpenRouterModel(message, systemPrompt, model) {
             content: message
           }
         ],
-        max_tokens: 500,
+        max_tokens: maxTokens,
         temperature: 0.7
       }),
       signal: controller.signal
@@ -169,6 +174,7 @@ async function callOpenRouterModel(message, systemPrompt, model) {
     return {
       content: data.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.',
       tokensUsed: data.usage?.total_tokens || 100,
+      finishReason: data.choices[0]?.finish_reason,
       model: model,
       provider: 'openrouter',
       cost: 0
@@ -180,7 +186,7 @@ async function callOpenRouterModel(message, systemPrompt, model) {
 }
 
 // Função para chamar Together.ai API como fallback final
-async function callTogetherAPI(message, systemPrompt) {
+async function callTogetherAPI(message, systemPrompt, maxTokens = CHAT_MAX_TOKENS) {
   const togetherKey = process.env.TOGETHER_API_KEY;
   
   if (!togetherKey) {
@@ -205,7 +211,7 @@ async function callTogetherAPI(message, systemPrompt) {
           content: message
         }
       ],
-      max_tokens: 500,
+      max_tokens: maxTokens,
       temperature: 0.7
     })
   });
@@ -220,6 +226,7 @@ async function callTogetherAPI(message, systemPrompt) {
   return {
     content: data.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.',
     tokensUsed: data.usage?.total_tokens || 100,
+    finishReason: data.choices[0]?.finish_reason,
     model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
     provider: 'together',
     cost: 0
@@ -227,7 +234,7 @@ async function callTogetherAPI(message, systemPrompt) {
 }
 
 // Sistema de dispatcher inteligente que tenta múltiplas LLMs
-async function smartDispatcher(message, systemPrompt) {
+async function smartDispatcher(message, systemPrompt, maxTokens = CHAT_MAX_TOKENS) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const togetherKey = process.env.TOGETHER_API_KEY;
   
@@ -238,7 +245,7 @@ async function smartDispatcher(message, systemPrompt) {
     for (const model of OPENROUTER_MODELS) {
       try {
         console.log(`🔄 Tentando ${model}...`);
-        const result = await callOpenRouterModel(message, systemPrompt, model);
+        const result = await callOpenRouterModel(message, systemPrompt, model, maxTokens);
         console.log(`✅ ${model} funcionou!`);
         return result;
       } catch (modelError) {
@@ -254,7 +261,7 @@ async function smartDispatcher(message, systemPrompt) {
   if (togetherKey) {
     try {
       console.log('🔄 Tentando Together.ai como fallback final...');
-      const result = await callTogetherAPI(message, systemPrompt);
+      const result = await callTogetherAPI(message, systemPrompt, maxTokens);
       console.log('✅ Together.ai funcionou!');
       return result;
     } catch (error) {
@@ -268,7 +275,7 @@ async function smartDispatcher(message, systemPrompt) {
 }
 
 // Gerar resposta da IA usando sistema de dispatcher inteligente
-async function generateResponse(message) {
+async function generateResponse(message, maxTokens = CHAT_MAX_TOKENS) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const togetherKey = process.env.TOGETHER_API_KEY;
   
@@ -303,7 +310,7 @@ Suas características:
 Responda de forma clara, objetiva e sempre mantendo uma perspectiva conservadora equilibrada.`;
 
     console.log('🚀 Iniciando sistema de dispatcher inteligente...');
-    const result = await smartDispatcher(message, systemPrompt);
+    const result = await smartDispatcher(message, systemPrompt, maxTokens);
     
     return {
       success: true,
@@ -763,7 +770,7 @@ Responda APENAS no seguinte formato JSON:
     }
     
     console.log('📤 Enviando para análise de IA...');
-    const result = await smartDispatcher(finalPrompt, 'Você é um especialista em verificação de fatos. Analise o conteúdo fornecido e responda no formato JSON solicitado.');
+    const result = await smartDispatcher(finalPrompt, 'Você é um especialista em verificação de fatos. Analise o conteúdo fornecido e responda no formato JSON solicitado.', FAKE_NEWS_MAX_TOKENS);
     console.log('📥 Resposta da IA recebida:', result);
     console.log('✅ Análise concluída:', result);
     
@@ -778,7 +785,11 @@ Responda APENAS no seguinte formato JSON:
         throw new Error('JSON não encontrado na resposta');
       }
     } catch (parseError) {
-      console.warn('Erro ao fazer parse do JSON, usando fallback:', parseError.message);
+      console.warn('Erro ao fazer parse do JSON, usando fallback:', parseError.message, {
+        model: result.model,
+        finishReason: result.finishReason,
+        content: result.content
+      });
       // Fallback se o JSON não for válido
       analysisResult = {
         resultado: 'tendencioso',
@@ -906,7 +917,7 @@ async function generateCreativeContent(type, prompt, tone, length) {
 
     // Usar o sistema de IA existente para gerar o conteúdo
     const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
-    const aiResult = await generateResponse(fullPrompt);
+    const aiResult = await generateResponse(fullPrompt, CREATIVE_MAX_TOKENS);
 
     if (!aiResult.success) {
       throw new Error(`Falha ao gerar conteúdo: ${aiResult.error}`);
@@ -942,6 +953,8 @@ module.exports = {
   getConversationMessages,
   smartDispatcher,
   OPENROUTER_MODELS,
+  CHAT_MAX_TOKENS,
+  LLM_TIMEOUT_MS,
   analyzeFakeNews,
   generateCreativeContent
 };
