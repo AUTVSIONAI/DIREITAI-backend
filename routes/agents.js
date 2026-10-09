@@ -1,7 +1,7 @@
 const express = require('express');
 const { supabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
-const { FREE_OPENROUTER_MODELS } = require('../services/aiService');
+const { OPENROUTER_MODELS } = require('../services/aiService');
 const router = express.Router();
 
 async function isPoliticianOwnedByUser(politicianId, user) {
@@ -365,7 +365,7 @@ Responda como este político responderia, mantendo coerência com suas posiçõe
             'X-Title': 'DireitaAI - Agentes Políticos'
           },
           body: JSON.stringify({
-            model: FREE_OPENROUTER_MODELS[0],
+            model: OPENROUTER_MODELS[0],
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: message }

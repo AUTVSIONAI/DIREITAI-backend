@@ -108,7 +108,8 @@ async function checkUserLimits(userId, userPlan = 'gratuito') {
 }
 
 // Lista de modelos gratuitos da OpenRouter para fallback inteligente
-const FREE_OPENROUTER_MODELS = [
+const OPENROUTER_MODELS = [
+  'anthropic/claude-haiku-5.5',
   'nvidia/nemotron-3-super-120b-a12b:free',
   'google/gemma-4-31b-it:free',
   'thinkingmachines/inkling:free',
@@ -232,9 +233,9 @@ async function smartDispatcher(message, systemPrompt) {
   
   // Se Claude falhou ou não há chave OpenRouter, tenta modelos gratuitos da OpenRouter
   if (openRouterKey) {
-    console.log('💡 Tentando modelos gratuitos da OpenRouter...');
+    console.log('💡 Tentando modelos da OpenRouter...');
     
-    for (const model of FREE_OPENROUTER_MODELS) {
+    for (const model of OPENROUTER_MODELS) {
       try {
         console.log(`🔄 Tentando ${model}...`);
         const result = await callOpenRouterModel(message, systemPrompt, model);
@@ -246,7 +247,7 @@ async function smartDispatcher(message, systemPrompt) {
       }
     }
     
-    console.log('⚠️ Todos os modelos gratuitos da OpenRouter falharam');
+    console.log('⚠️ Todos os modelos da OpenRouter falharam');
   }
   
   // Se OpenRouter falhou completamente, tenta Together.ai como último recurso
@@ -940,7 +941,7 @@ module.exports = {
   deleteConversation,
   getConversationMessages,
   smartDispatcher,
-  FREE_OPENROUTER_MODELS,
+  OPENROUTER_MODELS,
   analyzeFakeNews,
   generateCreativeContent
 };
