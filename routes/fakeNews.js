@@ -1,7 +1,7 @@
 const express = require('express');
 const { supabase, adminSupabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
-const { analyzeFakeNews } = require('../services/aiService');
+const { analyzeFakeNews, FREE_OPENROUTER_MODELS } = require('../services/aiService');
 const { randomUUID } = require('crypto');
 const router = express.Router();
 
@@ -46,7 +46,7 @@ Responda APENAS em formato JSON válido:
         'X-Title': 'DireitaAI - Detector de Fake News'
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        model: FREE_OPENROUTER_MODELS[0],
         messages: [
           {
             role: 'system',

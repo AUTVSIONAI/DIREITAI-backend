@@ -109,16 +109,13 @@ async function checkUserLimits(userId, userPlan = 'gratuito') {
 
 // Lista de modelos gratuitos da OpenRouter para fallback inteligente
 const FREE_OPENROUTER_MODELS = [
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'google/gemini-2.0-flash-exp:free',
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
-  'google/gemma-3-27b-it:free',
-  'qwen/qwq-32b:free',
-  'deepseek/deepseek-chat-v3-0324:free',
-  'google/gemini-2.5-pro-exp-03-25:free',
-  'mistralai/mistral-small-3.1-24b-instruct:free',
-  'meta-llama/llama-4-maverick:free',
-  'meta-llama/llama-4-scout:free'
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'google/gemma-4-31b-it:free',
+  'thinkingmachines/inkling:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'thinkingmachines/inkling-small:free',
+  'nvidia/nemotron-3.5-lightning:free'
 ];
 
 // Função para chamar OpenRouter com modelo específico
@@ -232,18 +229,6 @@ async function callTogetherAPI(message, systemPrompt) {
 async function smartDispatcher(message, systemPrompt) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const togetherKey = process.env.TOGETHER_API_KEY;
-  
-  // Primeiro, tenta o Claude 3.5 Sonnet (modelo principal)
-  if (openRouterKey) {
-    try {
-      console.log('🎯 Tentando Claude 3.5 Sonnet...');
-      const result = await callOpenRouterModel(message, systemPrompt, 'anthropic/claude-3.5-sonnet');
-      console.log('✅ Claude 3.5 Sonnet funcionou!');
-      return result;
-    } catch (error) {
-      console.log('❌ Claude 3.5 Sonnet falhou:', error.message);
-    }
-  }
   
   // Se Claude falhou ou não há chave OpenRouter, tenta modelos gratuitos da OpenRouter
   if (openRouterKey) {
@@ -955,6 +940,7 @@ module.exports = {
   deleteConversation,
   getConversationMessages,
   smartDispatcher,
+  FREE_OPENROUTER_MODELS,
   analyzeFakeNews,
   generateCreativeContent
 };
