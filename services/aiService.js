@@ -119,11 +119,13 @@ const OPENROUTER_MODELS = [
   'nvidia/nemotron-3.5-lightning:free'
 ];
 
-// Função para chamar OpenRouter com modelo específico
-const DEFAULT_MAX_TOKENS = 500;
-const FAKE_NEWS_MAX_TOKENS = 2000;
+const CHAT_MAX_TOKENS = 4000;
+const FAKE_NEWS_MAX_TOKENS = 4000;
+const CREATIVE_MAX_TOKENS = 8000;
+const LLM_TIMEOUT_MS = 90000;
 
-async function callOpenRouterModel(message, systemPrompt, model, maxTokens = DEFAULT_MAX_TOKENS) {
+// Função para chamar OpenRouter com modelo específico
+async function callOpenRouterModel(message, systemPrompt, model, maxTokens = CHAT_MAX_TOKENS) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   
   if (!openRouterKey) {
@@ -131,7 +133,7 @@ async function callOpenRouterModel(message, systemPrompt, model, maxTokens = DEF
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 segundos timeout
+  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -184,7 +186,7 @@ async function callOpenRouterModel(message, systemPrompt, model, maxTokens = DEF
 }
 
 // Função para chamar Together.ai API como fallback final
-async function callTogetherAPI(message, systemPrompt, maxTokens = DEFAULT_MAX_TOKENS) {
+async function callTogetherAPI(message, systemPrompt, maxTokens = CHAT_MAX_TOKENS) {
   const togetherKey = process.env.TOGETHER_API_KEY;
   
   if (!togetherKey) {
@@ -232,7 +234,7 @@ async function callTogetherAPI(message, systemPrompt, maxTokens = DEFAULT_MAX_TO
 }
 
 // Sistema de dispatcher inteligente que tenta múltiplas LLMs
-async function smartDispatcher(message, systemPrompt, maxTokens = DEFAULT_MAX_TOKENS) {
+async function smartDispatcher(message, systemPrompt, maxTokens = CHAT_MAX_TOKENS) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const togetherKey = process.env.TOGETHER_API_KEY;
   
@@ -273,7 +275,7 @@ async function smartDispatcher(message, systemPrompt, maxTokens = DEFAULT_MAX_TO
 }
 
 // Gerar resposta da IA usando sistema de dispatcher inteligente
-async function generateResponse(message) {
+async function generateResponse(message, maxTokens = CHAT_MAX_TOKENS) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const togetherKey = process.env.TOGETHER_API_KEY;
   
@@ -308,7 +310,7 @@ Suas características:
 Responda de forma clara, objetiva e sempre mantendo uma perspectiva conservadora equilibrada.`;
 
     console.log('🚀 Iniciando sistema de dispatcher inteligente...');
-    const result = await smartDispatcher(message, systemPrompt);
+    const result = await smartDispatcher(message, systemPrompt, maxTokens);
     
     return {
       success: true,
@@ -915,7 +917,7 @@ async function generateCreativeContent(type, prompt, tone, length) {
 
     // Usar o sistema de IA existente para gerar o conteúdo
     const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
-    const aiResult = await generateResponse(fullPrompt);
+    const aiResult = await generateResponse(fullPrompt, CREATIVE_MAX_TOKENS);
 
     if (!aiResult.success) {
       throw new Error(`Falha ao gerar conteúdo: ${aiResult.error}`);
@@ -951,6 +953,8 @@ module.exports = {
   getConversationMessages,
   smartDispatcher,
   OPENROUTER_MODELS,
+  CHAT_MAX_TOKENS,
+  LLM_TIMEOUT_MS,
   analyzeFakeNews,
   generateCreativeContent
 };

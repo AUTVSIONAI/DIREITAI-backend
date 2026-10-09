@@ -1,7 +1,7 @@
 const express = require('express');
 const { supabase } = require('../config/supabase');
 const { authenticateUser } = require('../middleware/auth');
-const { OPENROUTER_MODELS } = require('../services/aiService');
+const { OPENROUTER_MODELS, CHAT_MAX_TOKENS, LLM_TIMEOUT_MS } = require('../services/aiService');
 const router = express.Router();
 
 async function isPoliticianOwnedByUser(politicianId, user) {
@@ -354,7 +354,7 @@ Responda como este político responderia, mantendo coerência com suas posiçõe
     } else {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
         const apiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
@@ -370,7 +370,7 @@ Responda como este político responderia, mantendo coerência com suas posiçõe
               { role: 'system', content: systemPrompt },
               { role: 'user', content: message }
             ],
-            max_tokens: 500,
+            max_tokens: CHAT_MAX_TOKENS,
             temperature: 0.8
           }),
           signal: controller.signal
